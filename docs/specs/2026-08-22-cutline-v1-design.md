@@ -62,6 +62,23 @@ chains four tools and checks exit codes will ship silently wrong video.
 
 cutline's primary job is to be the thing that catches this.
 
+**Where the defect actually lives — measured 2026-08-22.** auto-editor 31.5.0 **preserves**
+rotation and geometry through its own render:
+
+| | width×height | rotation | frames | duration |
+|---|---|---|---|---|
+| source | 1920×1080 | **90** | 360 | 12.000 |
+| after auto-editor | 1920×1080 | **90** | 281 | 9.381 |
+
+(0.92 s; fixture built with `-display_rotation 90`, positive-controlled to confirm it carried the
+side data before the run.)
+
+So the defect is **not universal** — it belongs to naive filter-graph rendering, which is exactly
+what rev 1 specified and rev 2 delegates away. This does not retire the verification case; it
+**relocates** it. The suspect boundaries are now the **HyperFrames caption stage** and any custom
+ffmpeg step, both unmeasured. And since we hold positive proof that a `trim`/`concat` graph
+destroys rotation silently, any stage built on one is suspect until measured.
+
 ---
 
 ## 3. Architecture
@@ -215,6 +232,16 @@ reimplementation of a §3.2 upper-row capability.
 The faceless path is deferred not because it is hard but because verifying one path properly
 teaches what the second one needs.
 
+### 7.1 First test subject
+
+**`FORGE — Build 3 — 5-Threshold Content Series`, VIDEO 1 — THE EXPRESSION THRESHOLD.** A complete
+8–15 minute solo direct-to-camera script that already exists in the vault, first in a five-part
+series that has to be recorded regardless. Its own deployment notes call for 3–5 short clip
+derivatives per video, which exercises the caption and reframe stages.
+
+The Build 1 VSL is deliberately **not** first. It is a conversion asset; a pipeline should earn
+trust on content before a money asset is run through it.
+
 ---
 
 ## 8. Roadmap and acceptance criteria
@@ -224,6 +251,7 @@ Each version is done when its criterion is met. Nothing is done by default.
 | version | adds | done when |
 |---|---|---|
 | **v1** | verified recorded-source flow | a real recording goes cut → captioned with **every boundary verified**, including rotation on a portrait source; the suite is proven able to go red against all six fixture classes |
+| **v1.5** | own analyzer + renderer, as a *second* EDL producer behind the same interface | it renders the §7.1 subject, **preserves rotation**, and is benchmarked against auto-editor on the same file with the comparison published |
 | v2 | faceless source path | a HyperFrames composition enters the same flow and passes the same boundary checks |
 | v3 | MCP agent layer | an agent completes a full flow end to end, and **refuses** when a boundary check fails |
 | v4 | recording, publishing | optional |
@@ -236,6 +264,15 @@ Each version is done when its criterion is met. Nothing is done by default.
 
 **auto-editor is installed from GitHub releases** (`auto-editor-macos-arm64`, tag `31.5.0`),
 **never from pip** — see §0.2 and §5.
+
+Measured install, 2026-08-22:
+
+```
+~/.local/bin/auto-editor            26,117,768 bytes
+sha256  58d8893a389df60223b2a9d9f1307451d1581e1965c5f0e2e626c95024dbcca3
+file    Mach-O 64-bit executable arm64
+--version                           31.5.0
+```
 
 Tool versions are pinned and asserted at runtime. Every tool here is pre-1.0 or fast-moving;
 auto-editor changed implementation language inside a year. The CLI surface survived that rewrite,
@@ -306,8 +343,9 @@ out-of-range segments, §3.1 catches it as input validation.
 
 1. **auto-editor's real cut-count per hour of speech.** Unmeasured — no recording exists. It sizes
    nothing in v1 (render is delegated) but will size the flow's wall-clock.
-2. **Does auto-editor's OTIO export preserve rotation?** Unknown. If it does not, §2's defect is
-   present inside a dependency and the boundary check is the only thing that will catch it.
+2. ~~**Does auto-editor preserve rotation?**~~ **ANSWERED 2026-08-22 — yes.** Measured: rotation
+   and geometry survive its render intact (§2). Its *OTIO export* specifically remains unmeasured,
+   but the render path — the one v1 depends on — is clear.
 3. **HyperFrames' caption stage as a boundary.** Unmeasured whether it alters geometry or timing.
    §4.1's policy for that boundary is provisional until it is.
 4. **Version-pin range policy** — exact pin or floor? Exact is safer and noisier; unresolved.
