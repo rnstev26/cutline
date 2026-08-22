@@ -14,11 +14,25 @@ def test_cut_produces_a_shorter_verified_artifact(silence_mid, tmp_path):
     assert result.report.ok, str(result.report)
 
 
-def test_cut_preserves_rotation_and_the_boundary_proves_it(rotated, tmp_path):
+def test_cut_preserves_rotation_and_the_boundary_proves_it(rotated_with_silence, tmp_path):
     """auto-editor preserves rotation (measured). The check must confirm it
-    rather than assume it — this is the boundary that would catch a regression."""
-    result = cut(rotated, tmp_path)
-    assert probe(result.output).rotation == probe(rotated).rotation
+    rather than assume it — this is the boundary that would catch a regression.
+
+    Uses `rotated_with_silence`, not `rotated`: the plain `rotated` fixture has
+    no silence, so a cut through it keeps 100% of the frames, the no-op
+    short-circuit fires, and the output is a `shutil.copyfile` of the source —
+    proving only that copyfile preserves rotation, not that auto-editor's
+    render does. The assertions below confirm the render path actually ran.
+    """
+    before = probe(rotated_with_silence)
+    result = cut(rotated_with_silence, tmp_path)
+    after = probe(result.output)
+
+    # Prove the render path ran, not the no-op copy path.
+    assert result.output.read_bytes() != rotated_with_silence.read_bytes()
+    assert after.video.nb_frames < before.video.nb_frames
+
+    assert after.rotation == before.rotation
     assert result.report.ok, str(result.report)
 
 

@@ -113,3 +113,26 @@ def rotated(fixture_dir: Path) -> Path:
     flat = _build(fixture_dir / "_rot_flat.mp4")
     _ff(["-display_rotation", "90", "-i", str(flat), "-c", "copy", str(out)])
     return out
+
+
+@pytest.fixture(scope="session")
+def rotated_with_silence(fixture_dir: Path) -> Path:
+    """Rotated (rotation=90 side data) AND containing silence gaps.
+
+    `rotated` is a continuous tone with nothing to cut, so a cut through it
+    short-circuits as a no-op copy and never exercises auto-editor's actual
+    render path. This fixture carries the same silence pattern as
+    `silence_mid` so a cut through it renders for real, while still being
+    built the same two-pass way as `rotated`: `-display_rotation` is an INPUT
+    option, and the deprecated `-metadata:s:v rotate=` produces no side data
+    at all.
+    """
+    out = fixture_dir / "rotated_with_silence.mp4"
+    if out.exists():
+        return out
+    flat = _build(
+        fixture_dir / "_rot_flat_silence.mp4",
+        volume_filter="volume=enable='between(t,3,5)+between(t,8,9.5)':volume=0",
+    )
+    _ff(["-display_rotation", "90", "-i", str(flat), "-c", "copy", str(out)])
+    return out

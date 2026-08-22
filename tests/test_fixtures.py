@@ -62,6 +62,20 @@ def test_silence_to_eof_ends_at_or_past_duration(silence_to_eof):
     assert spans[-1][1] >= dur - 0.05
 
 
+def test_rotated_with_silence_carries_both_rotation_and_silence(rotated_with_silence):
+    data = _probe(rotated_with_silence, ["-select_streams", "v:0", "-show_streams"])
+    side = data["streams"][0].get("side_data_list", [])
+    rotations = [s.get("rotation") for s in side if "rotation" in s]
+    assert rotations, "fixture carries NO rotation side data — it cannot test the defect"
+    assert abs(rotations[0]) == 90
+
+    spans = _silences(rotated_with_silence)
+    assert spans, (
+        "no silence detected — a cut through this fixture would short-circuit "
+        "as a no-op and never exercise auto-editor's render path"
+    )
+
+
 def test_offset_streams_have_divergent_start_times(offset_streams):
     data = _probe(offset_streams, ["-show_streams"])
     starts = {s["codec_type"]: float(s["start_time"]) for s in data["streams"]}
