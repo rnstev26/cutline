@@ -177,6 +177,7 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
         raise FlowError(f"auto-editor reported success but {rendered} does not exist")
 
     after = probe(rendered)
+    _check_render_matches_edl(parsed, after, rendered)
     report = verify(before, after, CUT_POLICY)
     if not report.ok:
         raise FlowError(f"cut stage did not survive verification:\n{report}")
@@ -184,6 +185,43 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     return StageResult(
         name="cut", output=rendered, report=report, edl=parsed, before=before, after=after
     )
+
+
+def _check_render_matches_edl(parsed: edl_mod.Edl, after: MediaInfo, rendered: Path) -> None:
+    """Bound the shrink against auto-editor's own declaration.
+
+    CUT_POLICY cannot catch truncation by itself and should not try to: duration
+    and frame count are legitimately allowed to shrink at this boundary, so an
+    artifact holding 0.4 seconds of a 12-second source is "a shrink" and the
+    boundary report reads `[cut] OK`. What bounds the shrink is the EDL —
+    auto-editor declared a keep-list before rendering, and the render either
+    carries that many frames or it does not. §4.1 names frame count as the
+    property that "catches truncation"; this is the check that lets it.
+
+    Measured across all six fixture classes (silence_mid, silence_at_zero,
+    silence_to_eof, no_silence, offset_streams, rotated_with_silence) against
+    auto-editor 31.5.0: the rendered frame count equals the EDL total EXACTLY —
+    delta 0 in every case. So this is an equality, not a tolerance. A tolerance
+    would be an unmeasured knob, and the auto-editor version is pinned; if a
+    real source ever produces a ±1 delta, that is a measurement to take, not a
+    slack to guess.
+
+    Fails closed: an unreadable frame count is not evidence the render is sound.
+    """
+    declared = parsed.total_frames
+    actual = after.video.nb_frames if after.video else None
+    if actual is None:
+        raise FlowError(
+            f"cannot verify {rendered} against its EDL: the render reports no frame "
+            f"count, so auto-editor's declared {declared}-frame keep-list cannot be "
+            "checked. Refusing to call this cut verified."
+        )
+    if actual != declared:
+        raise FlowError(
+            f"cut stage rendered {actual} frames but its own EDL declared {declared} "
+            f"({rendered}). auto-editor's keep-list and its render disagree — the "
+            "artifact is truncated or padded."
+        )
 
 
 _YAVG_RE = re.compile(r"lavfi\.signalstats\.YAVG=([0-9.]+)")

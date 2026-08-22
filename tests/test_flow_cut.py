@@ -1,10 +1,12 @@
 import json
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from cutline.flow import FlowError, cut
 from cutline.probe import probe
-from cutline.verify import Change, Report
+from cutline.verify import CUT_POLICY, Change, Report, verify
 
 pytestmark = pytest.mark.requires_ffmpeg
 
@@ -139,3 +141,57 @@ def test_cut_handles_a_source_stem_with_glob_metacharacters(silence_mid, tmp_pat
     # check by leaving the first one behind.
     again = cut(awkward, out_dir)
     assert again.edl.total_frames == result.edl.total_frames
+
+
+@pytest.mark.requires_auto_editor
+def test_cut_rejects_a_truncated_render(monkeypatch, silence_mid, tmp_path):
+    """The reviewer's scenario: auto-editor emits a 0.4-second artifact from a
+    12-second source and the boundary report reads `[cut] OK`.
+
+    It reads OK because it SHOULD under CUT_POLICY alone — duration and frame
+    count are allowed to shrink at this boundary, and 0.4s is a shrink. The
+    first assertion below pins exactly that, so this test cannot later pass for
+    the wrong reason: the policy is not what catches truncation, the EDL
+    cross-check is.
+
+    The truncation is injected by shrinking what probe() reports for the
+    rendered file. auto-editor 31.5.0 does not truncate, so the real defect
+    cannot be produced from a fixture — what is under test is cut()'s reaction.
+    """
+    real_probe = probe
+    rendered_name = f"{silence_mid.stem}_cut.mp4"
+
+    def _truncating_probe(path):
+        info = real_probe(path)
+        if Path(path).name != rendered_name:
+            return info
+        video = next(s for s in info.streams if s.kind == "video")
+        others = tuple(s for s in info.streams if s.kind != "video")
+        return replace(
+            info,
+            duration=0.4,
+            streams=(replace(video, nb_frames=12), *others),
+        )
+
+    monkeypatch.setattr("cutline.flow.probe", _truncating_probe)
+
+    with pytest.raises(FlowError) as exc:
+        cut(silence_mid, tmp_path)
+    message = str(exc.value)
+    assert "12 frames" in message
+    assert "EDL declared" in message
+
+
+@pytest.mark.requires_auto_editor
+def test_the_cut_policy_alone_cannot_see_a_truncation(silence_mid, tmp_path):
+    """The other half of the test above: verify() reports OK on a truncated
+    artifact, by design. If this ever starts failing, CUT_POLICY has taken on
+    the magnitude question and the EDL cross-check needs re-justifying."""
+    result = cut(silence_mid, tmp_path)
+    before = probe(silence_mid)
+    video = next(s for s in result.after.streams if s.kind == "video")
+    others = tuple(s for s in result.after.streams if s.kind != "video")
+    truncated = replace(
+        result.after, duration=0.4, streams=(replace(video, nb_frames=12), *others)
+    )
+    assert verify(before, truncated, CUT_POLICY).ok
