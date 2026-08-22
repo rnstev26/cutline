@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-22
 **Revision:** 3 — supersedes rev 2 of the same date
-**Status:** Ratified direction, **implemented**. See §0.1 for what rev 3 corrected.
+**Status:** Ratified direction. v1 is **implemented**; its §8 acceptance criterion is **not yet
+met** — no real recording has been run through the flow. See §0.1 for what rev 3 corrected.
 
 ---
 
@@ -305,6 +306,21 @@ runner-image manifests with positive controls, the string does not appear. CI mu
 **pin the version**, or a runner-image bump reddens the suite with no code change — and green CI
 would otherwise say nothing about the operator's ffmpeg 8.1.1 homebrew arm64 build.
 
+**Rev 3, measured: "pin the version" is not satisfiable on the Linux runner with a distro
+package, and the first attempt to satisfy it broke CI outright.** `ubuntu-latest` is Ubuntu 24.04,
+which ships ffmpeg **6.1.1**; no Ubuntu release ships 8.x. A workflow step that ran
+`apt-get install -y ffmpeg` and then asserted the major was `8` therefore failed on every run —
+the exact failure mode the pre-flight rulings named, "CI red on a test that can never pass there
+trains everyone to ignore CI".
+
+CI currently asserts a **floor** of 6 plus the version-parsing surface, using
+`cutline.tools.find_tool` so the check exercises the same parser the runtime does, and the step
+name says floor rather than pin. `tools.FFMPEG_MIN` is unchanged at `"8."`, so `discover()` would
+still refuse the runner's build; no CI-selected test calls `discover()`, so this does not redden
+anything, but **green CI does not prove cutline would run on that runner**. Closing that gap needs
+either a static-build/PPA install step on Linux or a decision to turn `FFMPEG_MIN` into a floor.
+**That is an open contract decision, deliberately not taken here** — recorded in §13.
+
 ---
 
 ## 7. v1 scope
@@ -439,4 +455,18 @@ out-of-range segments, §3.1 catches it as input validation.
    orientation is **correct** (verified by frame extraction against a reference). §2 and §4.1
    carry the detail and the corrected per-boundary policy. **Residual:** whether an unintended
    pillarbox should warn or fail is a judgement call, currently specified as *warn*.
-4. **Version-pin range policy** — exact pin or floor? Exact is safer and noisier; unresolved.
+4. **Version-pin range policy** — exact pin or floor? Exact is safer and noisier; unresolved, and
+   rev 3 has now hit it in three places at once, so it needs an actual ruling:
+   - **ffmpeg:** `FFMPEG_MIN = "8."` cannot be met by `ubuntu-latest` (6.1.1). Either install a
+     static build / PPA on Linux, or make `FFMPEG_MIN` a floor. Until then green CI does not prove
+     cutline would run on the runner it went green on (§6, CI).
+   - **auto-editor:** exact `31.5.0`, because the pin protects a measured export-format surface.
+     That one is settled and should stay exact.
+   - **hyperframes:** pinned to the `0.8.` series rather than exactly, because the two available
+     measurements disagreed — the review brief recorded 0.8.7 and the machine reports 0.8.9. An
+     exact pin would have refused one of the two environments that ratified the work.
+5. **`COMPOSITE_POLICY.invariant` is a single property, `video.codec`.** The caption stage's
+   stop-the-flow gate is now under test (it was not, and could be deleted with the whole suite
+   green), but even wired correctly it can only fire on a codec change — at the boundary §2 calls
+   the suspect one. Everything else at that boundary is `may_change` or `warn`. Whether that set is
+   right is a policy decision, flagged rather than taken.
