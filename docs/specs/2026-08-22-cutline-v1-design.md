@@ -17,8 +17,9 @@ EDL, its own renderer. An adversarial review refuted the premise.
    "motion detection and NLE round-trip export — out of v1 scope." That was false. Measured on
    the live repository at `31.5.0`: `--edit audio|motion|blackdetect|subtitle` (composable),
    `--margin 0.3s,1.5sec` (asymmetric — rev 1 listed this as an *open question*),
-   `cmds/whisper`, and `exports/` emitting **otio · json · fcp7 · fcp11 · kdenlive · mlt ·
-   shotcut**, plus three agent skills. Under the Unlicense. That is rev 1's v1, v2 and v3.
+   `cmds/whisper`, and `exports/` carrying **otio · json · fcp7 · fcp11 · kdenlive · mlt ·
+   shotcut** source modules, plus three agent skills. *(Of those, the CLI accepts `v1`, `v3`,
+   `final-cut-pro` and `premiere`; see §3.1.)* Under the Unlicense. That is rev 1's v1, v2 and v3.
 2. **Rev 1 read a corpse.** PyPI's `auto-editor 29.3.1` is a dead Python branch last uploaded
    2025-11-04. The project was **rewritten in Nim**; the repo root carries `ae.nimble` and
    `config.nims` and **no `pyproject.toml`**. Rev 1's "whichever installs is what gets recorded"
@@ -127,19 +128,48 @@ introduced *by a handoff* and is invisible downstream of it.
 
 ### 3.1 The contract — consume, do not invent
 
-auto-editor emits **OpenTimelineIO** and JSON. cutline consumes those rather than defining a
+auto-editor emits its own JSON timeline formats. cutline consumes those rather than defining a
 private schema.
 
 Rev 1 defined a bespoke EDL. The adversarial review raised, as an unasked question, whether a
-private schema beat a standard one. The pivot answers it: the producer already emits a standard,
-so inventing one would mean writing an adapter *to our own format* for no gain.
+private schema beat a standard one. The pivot answers it: the producer already emits a documented
+format, so inventing one would mean writing an adapter *to our own format* for no gain.
 
-cutline's internal model remains a keep-segment list with the rev-1 invariants — sorted,
-non-overlapping, within `[0, duration]` — but it is a **parse target**, not a wire format.
+**Measured 2026-08-22 — correcting an earlier claim in this spec.** `--export otio` is
+**rejected** by the 31.5.0 binary despite `src/exports/otio.nim` existing in the source. The
+accepted names are **`v1`**, **`v3`**, `final-cut-pro`, `premiere`. cutline therefore consumes
+`v3`, with `v1` as a cross-check. *(An earlier revision said "OTIO"; that was read from the source
+tree, not from the CLI.)*
 
-**Invariant enforcement moves to the boundary.** Since the EDL now arrives from a foreign tool,
+Note also: **auto-editor overrides the output extension.** `-o out.json --export v3` writes
+`out.v3`. The flow must locate the artifact by the name auto-editor actually produced, not the one
+it asked for.
+
+**`v3` is the richer target and is the primary:**
+
+```json
+{ "version": "3", "timebase": "30/1", "resolution": [1920, 1080],
+  "samplerate": 44100, "layout": "mono",
+  "v": [[{ "src": "in.mp4", "start": 0, "dur": 97, "offset": 0, "stream": 0 }, …]],
+  "a": [[…]] }
+```
+
+`v1` is simpler — `chunks: [[start, end, speed], …]`, where a speed of `99999.0` marks a removed
+span and `1.0` a kept one.
+
+**Units are integer FRAMES at a rational timebase, not float seconds.** `timebase` is a rational
+string (`"30/1"`) and must be parsed as one, never assumed to be 30 or coerced to float. Frame
+arithmetic is exact; seconds arithmetic accumulates rounding drift across hundreds of cuts.
+cutline's internal model is therefore a keep-segment list **in frames**, converting to seconds
+only for display.
+
+`v3` also carries `resolution`, `samplerate` and `layout` — precisely the properties `verify()`
+needs, so the EDL doubles as a **declared expectation** to check the rendered artifact against.
+
+**Invariant enforcement moves to the boundary.** Since the EDL arrives from a foreign tool,
 invariant violations are *input validation*, not internal bugs, and must fail with the offending
-segment named.
+segment named. `v1` speeds other than `1.0` / `99999.0` are legal (auto-editor supports speed
+changes) and must be rejected explicitly in v1 scope rather than silently treated as keeps.
 
 ### 3.2 Delegation — what cutline never implements
 
@@ -166,7 +196,7 @@ missing, the first question is whether to contribute it upstream.
 |---|---|---|
 | `probe.py` | ffprobe → `MediaInfo`; the verification predicate | `Path → MediaInfo` |
 | `verify.py` | compare two `MediaInfo`s across a boundary; report what changed | `MediaInfo, MediaInfo, Policy → Report` |
-| `edl.py` | parse auto-editor OTIO/JSON → keep-segments; validate invariants | pure |
+| `edl.py` | parse auto-editor `v3`/`v1` JSON → keep-segments **in frames**; validate invariants | pure |
 | `tools.py` | locate + version-pin auto-editor, ffmpeg, hyperframes; refuse on drift | `→ ToolVersions` |
 | `flow.py` | the orchestration: source → cut → verify → caption → verify | composable steps |
 | `cli.py` | `probe` · `verify` · `cut` · `caption` · `run` | typer |
@@ -263,7 +293,7 @@ would otherwise say nothing about the operator's ffmpeg 8.1.1 homebrew arm64 bui
 
 ## 7. v1 scope
 
-**In:** tool discovery and version pinning · OTIO/JSON EDL parsing and validation · the full
+**In:** tool discovery and version pinning · `v3`/`v1` EDL parsing and validation · the full
 `verify()` property set · a single orchestrated flow, *recorded* source: auto-editor cut →
 verify → HyperFrames captions → verify · CLI · tests · CI.
 
@@ -343,7 +373,7 @@ cutline/
 |---|---|---|---|
 | build vs adopt | orchestrate, don't reimplement | the capabilities exist; the integration does not | dependent on upstream CLIs |
 | update flow | pin CLIs, not internals | the Nim rewrite preserved the CLI — proven durable | must track CLI changes |
-| EDL format | consume auto-editor's OTIO/JSON | the producer already emits a standard | bound to its schema |
+| EDL format | consume auto-editor's `v3` (with `v1` cross-check), in **frames** | the producer already emits it; integer frame math avoids float drift | bound to its schema |
 | verification | own it, at every boundary | the one thing no tool in the chain does | runtime cost per stage |
 | render | delegate to auto-editor | reimplementing gains nothing | see below |
 | runtime | Python | matches existing body of work; the Applied-AI-Engineer lane | — |
@@ -385,8 +415,8 @@ out-of-range segments, §3.1 catches it as input validation.
 1. **auto-editor's real cut-count per hour of speech.** Unmeasured — no recording exists. It sizes
    nothing in v1 (render is delegated) but will size the flow's wall-clock.
 2. ~~**Does auto-editor preserve rotation?**~~ **ANSWERED 2026-08-22 — yes.** Measured: rotation
-   and geometry survive its render intact (§2). Its *OTIO export* specifically remains unmeasured,
-   but the render path — the one v1 depends on — is clear.
+   and geometry survive its render intact (§2). Separately measured: `--export otio` is **rejected**
+   by the CLI — see §3.1. The render path, the one v1 depends on, is clear.
 3. ~~**HyperFrames' caption stage as a boundary.**~~ **ANSWERED 2026-08-22.** It is a
    re-composite, not a passthrough: rotation is consumed, geometry becomes the canvas, duration
    becomes the composition's, and audio is silently resampled 44.1k/mono → 48k/stereo. Visual
