@@ -9,7 +9,7 @@ from cutline.flow import (
     mean_luma,
     run,
 )
-from cutline.verify import COMPOSITE_POLICY
+from cutline.verify import COMPOSITE_POLICY, Change, Report
 
 pytestmark = pytest.mark.requires_ffmpeg
 
@@ -169,3 +169,31 @@ def test_black_pixel_ceiling_sits_between_the_floor_and_this_projects_content():
     Y~28.5, so 24 sits between them. A ceiling at or below 16 could never call
     real black black; one at or above 28.5 would call the content black."""
     assert 16 < BLACK_PIXEL_LUMA_CEILING < 28
+
+
+@pytest.mark.requires_hyperframes
+def test_a_failing_boundary_check_raises_flowerror(monkeypatch, hf_project, silence_mid, tmp_path):
+    """caption() must not hand a suspect artifact onward when verify() finds a
+    violation — spec §5: "a boundary check fails → stop the flow; never hand a
+    corrupted artifact to the next stage".
+
+    cut() has had this test since Task 6; its sibling never got one, and the
+    final review measured the consequence: mutating caption()'s
+    `if not report.ok:` to `if False:` left the whole 54-test suite green, so
+    the gate could be deleted with nothing noticing.
+
+    As in the cut() version, a genuine violation cannot be produced from a real
+    fixture — HyperFrames legitimately preserves the one property
+    COMPOSITE_POLICY holds invariant — so the violation is injected and what is
+    under test is caption()'s reaction to it.
+    """
+
+    def _fake_verify(before, after, policy):
+        report = Report(boundary=policy.name)
+        report.changes.append(Change(prop="video.codec", before="h264", after="hevc"))
+        return report
+
+    monkeypatch.setattr("cutline.flow.verify", _fake_verify)
+
+    with pytest.raises(FlowError, match="video.codec"):
+        caption(silence_mid, hf_project, tmp_path)
