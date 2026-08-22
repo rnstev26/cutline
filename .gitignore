@@ -30,3 +30,6 @@ spikes/**/*.json
 
 # OS
 .DS_Store
+
+# SDD workspace — ledger, briefs, review packages (scratch)
+.superpowers/
