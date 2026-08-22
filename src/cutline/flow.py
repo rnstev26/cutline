@@ -64,6 +64,15 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     #
     # auto-editor overrides the extension: `-o x.json --export v3` writes `x.v3`.
     # Ask for the stem and find what it actually wrote.
+    #
+    # out_dir is caller-supplied and may already hold a stale `<stem>_timeline.*`
+    # from a prior run — sorted() would then rank it ahead of or behind the fresh
+    # export by name alone, and `produced[0]` could silently pick the wrong file.
+    # Clear this stage's own glob pattern before exporting so the only match
+    # left afterward is the one this call just wrote.
+    edl_glob = f"{source.stem}_timeline.*"
+    for stale in out_dir.glob(edl_glob):
+        stale.unlink()
     edl_stem = out_dir / f"{source.stem}_timeline"
     _run(
         [
@@ -75,9 +84,13 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
         ],
         "auto-editor EDL export",
     )
-    produced = sorted(out_dir.glob(f"{source.stem}_timeline.*"))
+    produced = sorted(out_dir.glob(edl_glob))
     if not produced:
         raise FlowError(f"auto-editor wrote no EDL matching {edl_stem}.*")
+    if len(produced) > 1:
+        raise FlowError(
+            f"ambiguous EDL export: multiple files matched {edl_stem}.* -> {produced}"
+        )
     parsed = edl_mod.parse(produced[0])
 
     # No-op short-circuit: if the cut would keep essentially everything, copy
