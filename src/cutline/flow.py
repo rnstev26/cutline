@@ -26,10 +26,17 @@ NO_OP_RATIO = 0.995
 # ffprobe measures a limited-range (tv-range) YUV floor of 16 for literal
 # black, not 0 -- confirmed against a real ffmpeg `color=c=black` clip
 # (tests/test_fixtures.py::test_black_frame_is_actually_near_black pins this).
-# Real rendered content in this project measures in the low-to-high 200s. This
-# threshold sits four above the black floor: comfortably separated from black
-# (the case it must catch) and roughly a tenth of real content (the case it
-# must never trip on).
+# A threshold near 0 could never fire on that floor.
+#
+# Real content in THIS project's fixtures measures ~32-36, not some
+# comfortably-higher number -- confirmed directly, in both directions, by
+# tests/test_flow_caption.py::test_mean_luma_discriminates_black_from_content
+# (black_frame vs. silence_mid). So the margin here is modest, not wide:
+# roughly 4 units above the black floor, and roughly 1.6x below measured
+# content -- not the order-of-magnitude gap the number alone might suggest.
+# A project whose real footage runs legitimately dark should re-measure its
+# own population before trusting this gate; this value describes THIS
+# project's fixtures, not a general floor.
 BLACK_FRAME_LUMA_THRESHOLD = 20.0
 
 
