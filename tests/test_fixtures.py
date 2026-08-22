@@ -6,7 +6,23 @@ probe cannot make a broken fixture look correct.
 """
 
 import json
+import re
 import subprocess
+
+
+def _mean_luma(path):
+    """Average brightness via ffprobe directly, independent of
+    cutline.flow.mean_luma -- this must prove the FIXTURE is black on its own
+    terms, not merely that the guard agrees with itself."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-f", "lavfi",
+         "-i", f"movie={path},signalstats",
+         "-show_entries", "frame_tags=lavfi.signalstats.YAVG",
+         "-of", "csv=p=0", "-read_intervals", "%+#20"],
+        capture_output=True, text=True,
+    )
+    values = [float(v) for v in re.split(r"[,\s]+", proc.stdout) if v.strip()]
+    return sum(values) / len(values)
 
 
 def _probe(path, args):
@@ -74,6 +90,16 @@ def test_rotated_with_silence_carries_both_rotation_and_silence(rotated_with_sil
         "no silence detected — a cut through this fixture would short-circuit "
         "as a no-op and never exercise auto-editor's render path"
     )
+
+
+def test_black_frame_is_actually_near_black(black_frame):
+    """A correctly-sized, correctly-encoded black video does NOT measure 0 --
+    limited-range (tv-range) YUV floors literal black at Y=16. If this fixture
+    ever measured near 0 or near real-content brightness, it could not
+    exercise the guard's actual decision boundary."""
+    luma = _mean_luma(black_frame)
+    assert luma < 20.0, f"fixture measured {luma} -- not black enough to test the guard"
+    assert abs(luma - 16.0) < 3.0, f"expected the limited-range black floor (~16), got {luma}"
 
 
 def test_offset_streams_have_divergent_start_times(offset_streams):

@@ -144,6 +144,17 @@ def hf_project(fixture_dir: Path) -> Path:
 
     Scaffolded once per session; the flow copies each stage's input over
     assets/input.mp4 before rendering.
+
+    `data-no-timeline` on the root div: this composition is a static overlay
+    with no GSAP-driven animation, so there is no `window.__timelines.main`
+    for HyperFrames to ever register. Without this attribute, every render
+    burns the full sub-composition-readiness timeout (measured: ~45s) waiting
+    on a registration that was never coming, before doing any real work.
+    Traced in the installed hyperframes CLI (`pollSubCompositionTimelines` in
+    dist/cli.js): it polls every host carrying `data-composition-id` for that
+    registration and only proceeds anyway, best-effort, once the timeout
+    lapses. `data-no-timeline` is its own documented escape hatch for exactly
+    this case. Measured effect: ~94s per render dropped to ~4s.
     """
     proj = fixture_dir / "hfproj"
     if (proj / "index.html").exists():
@@ -161,11 +172,35 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
 #footage{position:absolute;inset:0}#footage video{width:100%;height:100%;object-fit:contain}
 #cap{position:absolute;bottom:120px;left:0;right:0;text-align:center;
 font-size:64px;font-weight:700;color:#fff}</style></head>
-<body><div id="root" data-composition-id="main" data-start="0" data-duration="6"
-data-width="1920" data-height="1080">
+<body><div id="root" data-composition-id="main" data-no-timeline data-start="0"
+data-duration="6" data-width="1920" data-height="1080">
 <div id="footage" class="clip" data-start="0" data-duration="6" data-track-index="0">
 <video src="assets/input.mp4" data-media data-start="0" data-duration="6"></video></div>
 <div id="cap" class="clip" data-start="0" data-duration="6" data-track-index="1">caption</div>
 </div></body></html>
 """)
     return proj
+
+
+@pytest.fixture(scope="session")
+def black_frame(fixture_dir: Path) -> Path:
+    """A solid black clip, correctly sized and encoded so it is a plausible
+    render output rather than a degenerate file -- the positive control for
+    the caption stage's mean_luma black-frame guard.
+
+    Deliberately built WITHOUT the red/green orientation marks _build() draws
+    on every other fixture: those marks would lift the average luma well
+    above the limited-range black floor and defeat the point of this fixture.
+    """
+    out = fixture_dir / "black_frame.mp4"
+    if out.exists():
+        return out
+    _ff(
+        [
+            "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:d={DUR}:r={FPS}",
+            "-f", "lavfi", "-i", TONE,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            "-shortest", str(out),
+        ]
+    )
+    return out

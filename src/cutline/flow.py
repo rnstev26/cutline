@@ -23,6 +23,15 @@ from cutline.verify import CUT_POLICY, Report, verify
 # no-op, and re-encoding would cost quality for nothing.
 NO_OP_RATIO = 0.995
 
+# ffprobe measures a limited-range (tv-range) YUV floor of 16 for literal
+# black, not 0 -- confirmed against a real ffmpeg `color=c=black` clip
+# (tests/test_fixtures.py::test_black_frame_is_actually_near_black pins this).
+# Real rendered content in this project measures in the low-to-high 200s. This
+# threshold sits four above the black floor: comfortably separated from black
+# (the case it must catch) and roughly a tenth of real content (the case it
+# must never trip on).
+BLACK_FRAME_LUMA_THRESHOLD = 20.0
+
 
 class FlowError(RuntimeError):
     """A stage failed, or produced an artifact that did not survive verification."""
@@ -184,7 +193,11 @@ def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
     new = sorted(set(renders.glob("*.mp4")) - existing) if renders.exists() else []
     if not new:
         raise FlowError(f"hyperframes reported success but wrote no new mp4 in {renders}")
-    produced = new[-1]
+    if len(new) > 1:
+        raise FlowError(
+            f"ambiguous render: multiple new files appeared in {renders} -> {new}"
+        )
+    produced = new[0]
     final = out_dir / f"{source.stem}_captioned.mp4"
     shutil.copyfile(produced, final)
 
@@ -192,7 +205,7 @@ def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
     report = verify(before, after, COMPOSITE_POLICY)
     if not report.ok:
         raise FlowError(f"caption stage did not survive verification:\n{report}")
-    if mean_luma(final) <= 5.0:
+    if mean_luma(final) <= BLACK_FRAME_LUMA_THRESHOLD:
         raise FlowError(f"caption stage produced an essentially black video: {final}")
 
     return StageResult(name="caption", output=final, report=report,
