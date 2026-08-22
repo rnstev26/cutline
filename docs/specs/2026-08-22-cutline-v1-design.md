@@ -79,6 +79,31 @@ what rev 1 specified and rev 2 delegates away. This does not retire the verifica
 ffmpeg step, both unmeasured. And since we hold positive proof that a `trim`/`concat` graph
 destroys rotation silently, any stage built on one is suspect until measured.
 
+**The HyperFrames boundary — measured 2026-08-22, and it behaves differently in kind.** A
+rotated source (1920×1080, `rotation=90`, i.e. displaying as 1080×1920 portrait) put through a
+HyperFrames composition and rendered:
+
+| property | source | after HF |
+|---|---|---|
+| rotation side data | 90 | **absent** |
+| width × height | 1920×1080 | 1920×1080 *(the canvas, not the source)* |
+| **visual orientation** | portrait | **portrait — correct, verified by frame extraction** |
+| audio | 44100 Hz, **mono** | 48000 Hz, **stereo** |
+| duration | 12.0 | 6.0 *(the composition's, not the source's)* |
+
+**HyperFrames is a re-composite, not a passthrough.** Chrome honours the display matrix when
+playing the video, so the footage is rendered **upright** — there is no sideways-video defect. But
+the output is a fresh render at the composition's canvas size, so rotation side data is
+legitimately gone and geometry is legitimately the canvas's.
+
+Two consequences, both real:
+
+1. **A portrait source in a landscape composition is silently pillarboxed.** Visible in the
+   measurement above as black bars. Not corruption — but not usually what was intended either,
+   and nothing in the chain says so.
+2. **Audio is silently resampled and up-mixed.** 44.1 kHz mono became 48 kHz stereo with no
+   warning. Rev 1's property set would not have noticed.
+
 ---
 
 ## 3. Architecture
@@ -167,7 +192,23 @@ defect**. The set is therefore:
 | **stream `start_time` per stream** | measured: a real recorder yields video `0.000000` and audio `0.476009`; a synthetic fixture yields both at zero. Cuts computed on the audio timeline and applied to the video timeline drift by that offset. |
 
 A `Policy` names which properties must be *identical* across a boundary and which may legitimately
-change (a cut changes duration and frame count; nothing may change rotation).
+change. **The policy is per-boundary, and "nothing may change rotation" is wrong as a global
+rule** — measured, the two boundaries differ in kind:
+
+| boundary | rotation | geometry | duration | audio params |
+|---|---|---|---|---|
+| **auto-editor** (cut) | **must be identical** — measured, it is | must be identical | may shrink | must be identical |
+| **HyperFrames** (composite) | legitimately **consumed** into the canvas | legitimately becomes the **canvas** size | becomes the **composition's** | must be **declared**, not discovered |
+
+For the HyperFrames boundary the meaningful checks are therefore different questions:
+
+- did the source's **display aspect** match the composition canvas, or was it silently
+  pillarboxed? (warn, do not fail — it may be intended)
+- are the output audio parameters the **declared** ones, rather than whatever the renderer chose?
+- is the visual content actually present, rather than a correctly-sized black frame?
+
+This is why `verify()` takes a `Policy` rather than a fixed rule set. Rev 2 had the concept right
+and the default wrong.
 
 ---
 
@@ -346,6 +387,10 @@ out-of-range segments, §3.1 catches it as input validation.
 2. ~~**Does auto-editor preserve rotation?**~~ **ANSWERED 2026-08-22 — yes.** Measured: rotation
    and geometry survive its render intact (§2). Its *OTIO export* specifically remains unmeasured,
    but the render path — the one v1 depends on — is clear.
-3. **HyperFrames' caption stage as a boundary.** Unmeasured whether it alters geometry or timing.
-   §4.1's policy for that boundary is provisional until it is.
+3. ~~**HyperFrames' caption stage as a boundary.**~~ **ANSWERED 2026-08-22.** It is a
+   re-composite, not a passthrough: rotation is consumed, geometry becomes the canvas, duration
+   becomes the composition's, and audio is silently resampled 44.1k/mono → 48k/stereo. Visual
+   orientation is **correct** (verified by frame extraction against a reference). §2 and §4.1
+   carry the detail and the corrected per-boundary policy. **Residual:** whether an unintended
+   pillarbox should warn or fail is a judgement call, currently specified as *warn*.
 4. **Version-pin range policy** — exact pin or floor? Exact is safer and noisier; unresolved.
