@@ -1,6 +1,9 @@
+import re
+
 import pytest
 
 from cutline.tools import (
+    FFMPEG_MIN,
     HYPERFRAMES_MIN,
     Tool,
     ToolError,
@@ -10,12 +13,41 @@ from cutline.tools import (
     require_hyperframes,
 )
 
+# ubuntu-latest is Ubuntu 24.04, which ships ffmpeg 6.1.1. No Ubuntu release
+# ships 8.x, so an equality on the operator's major could never hold in CI —
+# and a test that can never pass there trains everyone to ignore CI.
+CI_FFMPEG_FLOOR = 6
+
 
 def test_find_tool_returns_path_and_version():
+    r"""Asserts the PARSING SURFACE, which is what cutline actually depends on,
+    rather than the operator's exact major.
+
+    `assert t.version.startswith("8.")` was the previous assertion and it
+    carried no marker, so CI selected it and it failed deterministically on
+    Linux. A floor plus a shape assertion is not vacuous: if `_VERSION_RE` or
+    `_version_of` ever returned something that is not a version, the fullmatch
+    below goes red — mutating the regex to `(\d+)` reddens it, measured.
+    """
     t = find_tool("ffprobe")
     assert isinstance(t, Tool)
     assert t.path.exists()
-    assert t.version.startswith("8.")  # measured: 8.1.1 on the target machine
+    assert re.fullmatch(r"\d+\.\d+(\.\d+)?", t.version), (
+        f"cutline parsed {t.version!r} out of `ffprobe --version` — not a version"
+    )
+    assert int(t.version.split(".")[0]) >= CI_FFMPEG_FLOOR
+
+
+@pytest.mark.requires_pinned_ffmpeg
+def test_the_operators_ffmpeg_pin_is_satisfiable_here():
+    """The pin itself, kept under test on the machine the pin describes.
+
+    FFMPEG_MIN is "8." and the CI runners ship 6.1.1, so this is deselected in
+    CI rather than relaxed here. Deselecting is the honest move: relaxing it
+    would leave nothing anywhere asserting that the pin discover() enforces can
+    actually be met.
+    """
+    assert find_tool("ffprobe", FFMPEG_MIN).version.startswith(FFMPEG_MIN)
 
 
 def test_find_tool_raises_naming_the_missing_binary():

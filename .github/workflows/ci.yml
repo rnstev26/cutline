@@ -16,8 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # ffmpeg is NOT preinstalled on either runner image — measured against
-      # both manifests. It must be installed, and pinned, or a runner-image
-      # bump reddens the suite with no code change.
+      # both manifests. It must be installed.
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -28,20 +27,54 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ffmpeg
 
-      # Distro packages cannot be pinned to an exact build across two package
-      # managers, so pin the MAJOR and fail loudly on drift. Without this, a
-      # runner-image bump changes the parsing surface silently and green CI
-      # stops meaning anything about the operator's ffmpeg 8.1.1.
-      - name: Assert ffmpeg major version
-        shell: bash
-        run: |
-          set -euo pipefail
-          v=$(ffmpeg -version | head -1 | sed -E 's/.*version ([0-9]+)\..*/\1/')
-          echo "ffmpeg major: $v"
-          test "$v" = "8" || { echo "::error::expected ffmpeg 8.x, got $v"; exit 1; }
-
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
+
+      # The previous step was named "Assert ffmpeg major version" and asserted
+      # `test "$v" = "8"` after a bare `apt-get install -y ffmpeg`. It claimed a
+      # pin it did not perform, and the assertion could never hold: ubuntu-latest
+      # is Ubuntu 24.04, which ships ffmpeg 6.1.1, and no Ubuntu release ships
+      # 8.x. The Linux leg therefore failed deterministically on every run, for a
+      # reason no code change could fix — Ruling B's own stated failure mode,
+      # "CI red on a test that can never pass there trains everyone to ignore CI".
+      #
+      # Pinning to 8 on Linux needs a static build or a PPA: a new network
+      # dependency whose own outage reddens CI for an unrelated reason. So this
+      # step asserts what a distro package can actually deliver — a FLOOR — plus
+      # the thing cutline actually depends on, which is that its own version
+      # parser can read this build. It runs cutline.tools.find_tool rather than a
+      # reimplemented sed, so the check and the runtime use the same parser.
+      #
+      # DELIBERATELY NOT PAPERED OVER: tools.FFMPEG_MIN is still "8.", so
+      # discover() / `cutline doctor` would REFUSE the Linux runner's ffmpeg
+      # 6.1.1. Nothing in the CI selection calls discover() — test_doctor carries
+      # requires_auto_editor and is deselected — so this does not redden
+      # anything, but green CI here does NOT prove cutline would run on this
+      # runner. Whether FFMPEG_MIN should become a floor is a contract decision,
+      # not a CI one.
+      - name: Assert ffmpeg parses and meets the CI floor (NOT the operator's 8.x pin)
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import re
+          import sys
+
+          from cutline.tools import find_tool
+
+          CI_FLOOR = 6  # Ubuntu 24.04, the ubuntu-latest image, ships 6.1.1
+
+          for name in ("ffmpeg", "ffprobe"):
+              tool = find_tool(name)
+              print(f"{name}: {tool.version}  ({tool.path})")
+              if not re.fullmatch(r"\d+\.\d+(\.\d+)?", tool.version):
+                  print(f"::error::cutline parsed {tool.version!r} out of {name} "
+                        "--version; that is not a version")
+                  sys.exit(1)
+              major = int(tool.version.split(".")[0])
+              if major < CI_FLOOR:
+                  print(f"::error::{name} {tool.version} is below the CI floor of {CI_FLOOR}")
+                  sys.exit(1)
+          PY
 
       - name: Lint
         run: uv run ruff check .
@@ -54,7 +87,12 @@ jobs:
       # not file-path deselection, because a marker survives a test file being
       # renamed or split and a --deselect path does not — see Task 9 report
       # for the marker-sweep evidence (which tests carry which marker and why).
+      #
+      # requires_pinned_ffmpeg is the third: the operator's FFMPEG_MIN pin is
+      # 8.x and the Linux runner has 6.1.1, so the test that asserts the pin is
+      # satisfiable is deselected HERE rather than weakened THERE. That keeps
+      # the pin under test on the machine the pin describes.
       - name: Tests
         run: |
           uv run pytest -v \
-            -m "not requires_auto_editor and not requires_hyperframes"
+            -m "not requires_auto_editor and not requires_hyperframes and not requires_pinned_ffmpeg"
