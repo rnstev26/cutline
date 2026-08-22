@@ -232,3 +232,34 @@ def black_frame(fixture_dir: Path) -> Path:
         ]
     )
     return out
+
+
+@pytest.fixture(scope="session")
+def black_after_head(fixture_dir: Path) -> Path:
+    """Bright for the first second, black for the eleven after it.
+
+    The positive control for WHERE the luma guard samples, which the
+    uniformly-black `black_frame` fixture structurally cannot be: a probe that
+    reads only the head of the file measures this clip at YAVG 235 and finds no
+    black pixels at all, while the same clip sampled across its whole timeline
+    measures YAVG 34.25 and 91.67% black pixels. `black_frame` agrees with both
+    samplings, so it cannot tell "checks the video" from "checks the first 0.67
+    seconds" -- measured, that is exactly the hole a 20-frame probe sat in.
+
+    Video only: this fixture exists for the luma probe, and an audio track
+    would add nothing it measures.
+    """
+    out = fixture_dir / "black_after_head.mp4"
+    # Same disk-cache hazard as `_build` above: mutating the args below this
+    # check has no effect until tests/_fixtures/black_after_head.mp4 is deleted.
+    if out.exists():
+        return out
+    _ff(
+        [
+            "-f", "lavfi", "-i", f"color=c=white:s={W}x{H}:d=1:r={FPS}",
+            "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:d={DUR - 1}:r={FPS}",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out),
+        ]
+    )
+    return out

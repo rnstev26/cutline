@@ -10,18 +10,32 @@ import re
 import subprocess
 
 
-def _mean_luma(path):
-    """Average brightness via ffprobe directly, independent of
-    cutline.flow.mean_luma -- this must prove the FIXTURE is black on its own
-    terms, not merely that the guard agrees with itself."""
+def _luma_series(path, seek=None, frames=None):
+    """Per-frame YAVG via ffmpeg directly, independent of cutline.flow -- this
+    must prove the FIXTURE is black on its own terms, not merely that the guard
+    agrees with itself.
+
+    The path is an argv element rather than an interpolated `movie={path}`
+    lavfi source, for the same reason cutline.flow._sample_luma stopped
+    interpolating it: measured, a `movie=` value breaks on `:`, `'` and `=`
+    however it is quoted, and the resulting error blames the luma rather than
+    the path.
+    """
+    head = ["-ss", str(seek)] if seek is not None else []
+    tail = ["-frames:v", str(frames)] if frames is not None else []
     proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-f", "lavfi",
-         "-i", f"movie={path},signalstats",
-         "-show_entries", "frame_tags=lavfi.signalstats.YAVG",
-         "-of", "csv=p=0", "-read_intervals", "%+#20"],
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", *head,
+         "-i", str(path), *tail,
+         "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-",
+         "-an", "-f", "null", "-"],
         capture_output=True, text=True,
     )
-    values = [float(v) for v in re.split(r"[,\s]+", proc.stdout) if v.strip()]
+    return [float(v) for v in re.findall(r"lavfi\.signalstats\.YAVG=([0-9.]+)", proc.stdout)]
+
+
+def _mean_luma(path, seek=None, frames=None):
+    values = _luma_series(path, seek=seek, frames=frames)
+    assert values, f"no luma samples for {path}"
     return sum(values) / len(values)
 
 
@@ -107,4 +121,22 @@ def test_offset_streams_have_divergent_start_times(offset_streams):
     starts = {s["codec_type"]: float(s["start_time"]) for s in data["streams"]}
     assert abs(starts["audio"] - starts["video"]) > 0.2, (
         "streams start together — this fixture cannot exercise timeline divergence"
+    )
+
+
+def test_black_after_head_is_bright_at_the_head_and_black_after(black_after_head):
+    """The fixture must exhibit BOTH halves of its defining property, or it
+    cannot show where a luma probe sampled.
+
+    A probe reading only the first 20 frames sees pure white here; the same
+    file read whole is 11/12 black. If this fixture ever became black at the
+    head too, the whole-timeline test it backs would pass for the wrong reason.
+    """
+    head = _mean_luma(black_after_head, frames=20)
+    tail = _mean_luma(black_after_head, seek=2)
+    assert head > 200, (
+        f"head measured {head} -- not bright, so a head-only probe would not be fooled"
+    )
+    assert tail < 20, (
+        f"tail measured {tail} -- not black, so a whole-file probe would have nothing to catch"
     )

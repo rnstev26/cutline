@@ -24,21 +24,50 @@ from cutline.verify import CUT_POLICY, Report, verify
 # no-op, and re-encoding would cost quality for nothing.
 NO_OP_RATIO = 0.995
 
-# ffprobe measures a limited-range (tv-range) YUV floor of 16 for literal
-# black, not 0 -- confirmed against a real ffmpeg `color=c=black` clip
-# (tests/test_fixtures.py::test_black_frame_is_actually_near_black pins this).
-# A threshold near 0 could never fire on that floor.
+# How often the luma probe samples. The previous implementation read
+# `-read_intervals "%+#20"` -- twenty frames, i.e. the FIRST 0.67 SECONDS at
+# 30fps -- and called the result the video's brightness. Measured on a clip of
+# one second of white followed by five seconds of black: that sampling returns
+# 235.0 and the guard does not fire; sampled across the whole timeline the same
+# clip returns 52.5. Four samples per second is spread over the entire duration
+# and still cheap -- measured 0.13s wall for a 12s 1080p clip (~90x realtime),
+# so a 15-minute recording costs on the order of 10s. Decode dominates the
+# cost, so raising or lowering this rate barely moves it.
+LUMA_SAMPLE_FPS = 4
+
+# What counts as a black PIXEL. ffmpeg measures a limited-range (tv-range) luma
+# floor of 16 for literal black, not 0 -- confirmed against a real ffmpeg
+# `color=c=black` clip (tests/test_fixtures.py::test_black_frame_is_actually_
+# near_black pins this), so a ceiling near 0 could never fire on that floor.
+# Measured on this project's fixtures the navy content field sits at Y~28.5, so
+# 24 separates bar from content with roughly 8 units of headroom either side.
+BLACK_PIXEL_LUMA_CEILING = 24
+
+# What counts as a black RENDER: the fraction of sampled pixels at or below
+# that ceiling. This replaces a whole-frame MEAN-luma gate, which the project's
+# own spec-8 acceptance case ("rotation on a portrait source") very nearly
+# failed -- measured, the captioned portrait artifact means 21.227 against a
+# 20.0 gate, a 6% margin, because pillarboxing 9:16 into a 16:9 canvas fills
+# 68% of every frame with Y=16 and the mean averages the bars in with the
+# picture. Any portrait source darker than a synthetic navy card would have
+# been rejected as "essentially black" while rendering correctly.
 #
-# Real content in THIS project's fixtures measures ~32-36, not some
-# comfortably-higher number -- confirmed directly, in both directions, by
-# tests/test_flow_caption.py::test_mean_luma_discriminates_black_from_content
-# (black_frame vs. silence_mid). So the margin here is modest, not wide:
-# roughly 4 units above the black floor, and roughly 1.6x below measured
-# content -- not the order-of-magnitude gap the number alone might suggest.
-# A project whose real footage runs legitimately dark should re-measure its
-# own population before trusting this gate; this value describes THIS
-# project's fixtures, not a general floor.
-BLACK_FRAME_LUMA_THRESHOLD = 20.0
+# Measured with THIS quantity instead, sampled across the whole timeline:
+#
+#   captioned portrait acceptance case (correct render)   0.684   passes
+#   1s of white then 11s of black                         0.917   fails
+#   render where only the caption overlay drew            0.980   fails
+#   fully black render                                    1.000   fails
+#   captioned landscape source (correct render)           0.000   passes
+#
+# 0.684 is not a fixture accident: it is the geometric maximum for pillarboxing
+# 9:16 into 16:9 (1 - (9/16)/(16/9) = 0.6836), so it is the worst legitimate
+# value this canvas can produce. The gate therefore sits 0.116 above the worst
+# legitimate case (1.17x) and 0.063 below the tightest failing case it must
+# still catch (the caption-only render at 0.980). A project whose canvas mixes
+# more extreme aspects -- 2.35:1 letterboxed into 9:16 reaches 0.76 of bars --
+# must re-measure its own population before trusting this number.
+BLACK_FRAME_RATIO_THRESHOLD = 0.80
 
 
 class FlowError(RuntimeError):
@@ -157,27 +186,77 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     )
 
 
-def mean_luma(path: Path) -> float:
-    """Average brightness, as a cheap 'is there actually a picture here' check.
+_YAVG_RE = re.compile(r"lavfi\.signalstats\.YAVG=([0-9.]+)")
+_PBLACK_RE = re.compile(r"lavfi\.blackframe\.pblack=([0-9.]+)")
 
-    A correctly-sized, correctly-encoded black video satisfies every metadata
-    assertion, so metadata alone cannot tell you the render worked.
+
+@dataclass(frozen=True)
+class LumaSample:
+    """What one sampling pass over a file measured."""
+
+    mean: float         # mean per-frame YAVG across the sampled frames
+    black_ratio: float  # mean per-frame fraction of pixels at/below the ceiling
+    frames: int
+
+
+def _sample_luma(path: Path) -> LumaSample:
+    """Sample brightness across the WHOLE timeline, in one decode pass.
+
+    The path is passed as an ordinary `-i` argument rather than interpolated
+    into a `movie=` lavfi source. That is not merely tidier: the old form broke
+    on ordinary filenames. Measured, single-quoting a `movie=` path survives
+    `,` `[` `]` `;` `\\` and spaces but still fails on `:`, `'` and `=` -- so a
+    file called `take,1.mp4` raised "could not measure luma", blaming the luma
+    rather than the path, and `take:1.mp4` and `take'1.mp4` failed the same way
+    however they were quoted. Handing ffmpeg the filename as an argv element
+    removes the escaping problem instead of trying to win it.
     """
+    path = Path(path)
     proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-f", "lavfi",
-         "-i", f"movie={path},signalstats",
-         "-show_entries", "frame_tags=lavfi.signalstats.YAVG",
-         "-of", "csv=p=0", "-read_intervals", "%+#20"],
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+         "-i", str(path),
+         "-vf", (f"fps={LUMA_SAMPLE_FPS},signalstats,"
+                 f"blackframe=amount=0:threshold={BLACK_PIXEL_LUMA_CEILING},"
+                 "metadata=print:file=-"),
+         "-an", "-f", "null", "-"],
         capture_output=True, text=True,
     )
-    # ffprobe's csv=p=0 output measured to carry a stray trailing comma on its
-    # first line (e.g. "31.7971,\n31.7971\n..."); splitting on whitespace alone
-    # leaves that comma attached and float() raises on it. Split on comma OR
-    # whitespace so every row parses regardless of where the comma lands.
-    values = [float(v) for v in re.split(r"[,\s]+", proc.stdout) if v.strip()]
-    if not values:
-        raise FlowError(f"could not measure luma for {path}")
-    return sum(values) / len(values)
+    yavg = [float(v) for v in _YAVG_RE.findall(proc.stdout)]
+    pblack = [float(v) for v in _PBLACK_RE.findall(proc.stdout)]
+    if not yavg or len(pblack) != len(yavg):
+        raise FlowError(
+            f"could not measure luma for {path} "
+            f"({len(yavg)} luma samples, {len(pblack)} black-pixel samples; "
+            f"ffmpeg said: {proc.stderr.strip()[:200] or 'nothing'})"
+        )
+    return LumaSample(
+        mean=sum(yavg) / len(yavg),
+        black_ratio=sum(pblack) / len(pblack) / 100.0,
+        frames=len(yavg),
+    )
+
+
+def mean_luma(path: Path) -> float:
+    """Average brightness across the whole timeline.
+
+    Diagnostic rather than gate: a correctly-sized, correctly-encoded black
+    video satisfies every metadata assertion, but so does a correctly rendered
+    portrait source whose pillarbox bars drag the mean down. `black_pixel_ratio`
+    is what the caption stage actually gates on; this number goes in the message
+    so a human can see how dark the render was as well as how much of it was
+    black.
+    """
+    return _sample_luma(path).mean
+
+
+def black_pixel_ratio(path: Path) -> float:
+    """Fraction of sampled pixels sitting at or below the black floor.
+
+    The 'is there actually a picture here' check. Unlike a whole-frame mean this
+    separates "the render is black" from "the render is correct and letterboxed"
+    -- see BLACK_FRAME_RATIO_THRESHOLD for the measured populations.
+    """
+    return _sample_luma(path).black_ratio
 
 
 def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
@@ -220,8 +299,13 @@ def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
     report = verify(before, after, COMPOSITE_POLICY)
     if not report.ok:
         raise FlowError(f"caption stage did not survive verification:\n{report}")
-    if mean_luma(final) <= BLACK_FRAME_LUMA_THRESHOLD:
-        raise FlowError(f"caption stage produced an essentially black video: {final}")
+    black = black_pixel_ratio(final)
+    if black >= BLACK_FRAME_RATIO_THRESHOLD:
+        raise FlowError(
+            f"caption stage produced an essentially black video: {final} "
+            f"({black:.1%} of sampled pixels at or below luma "
+            f"{BLACK_PIXEL_LUMA_CEILING}, mean luma {mean_luma(final):.1f})"
+        )
 
     return StageResult(name="caption", output=final, report=report,
                        before=before, after=after)
