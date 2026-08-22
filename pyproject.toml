@@ -36,6 +36,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "requires_ffmpeg: test shells out to a real ffmpeg/ffprobe binary",
+    "requires_auto_editor: test needs the auto-editor binary, which CI does not install",
 ]
 
 [tool.ruff]
