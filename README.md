@@ -39,7 +39,7 @@ Nothing here has shipped. Each version's acceptance criterion is what defines it
 | version | adds | done when |
 |---|---|---|
 | **v1** | verified recorded-source flow | a real recording goes cut → captioned with **every boundary verified**, including rotation on a portrait source; the suite is proven able to go red against all six fixture classes |
-| **v1.5** | own analyzer + renderer, as a *second* EDL producer behind the same interface | it renders the test subject, **preserves rotation**, and is benchmarked against auto-editor on the same file with the comparison published |
+| **v1.5** | own analyzer + renderer, as a *second* EDL producer behind the same interface | it renders the **first test subject** (spec §7.1), **preserves rotation**, and is benchmarked against auto-editor on the same file with the comparison published |
 | v2 | faceless source path | a HyperFrames composition enters the same flow and passes the same boundary checks |
 | v3 | MCP agent layer | an agent completes a full flow end to end, and **refuses** when a boundary check fails |
 | v4 | recording, publishing | optional |
