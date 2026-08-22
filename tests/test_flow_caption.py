@@ -4,11 +4,13 @@ from cutline.flow import (
     BLACK_FRAME_RATIO_THRESHOLD,
     BLACK_PIXEL_LUMA_CEILING,
     FlowError,
+    _run,
     black_pixel_ratio,
     caption,
     mean_luma,
     run,
 )
+from cutline.tools import ToolError
 from cutline.verify import COMPOSITE_POLICY, Change, Report
 
 pytestmark = pytest.mark.requires_ffmpeg
@@ -197,3 +199,33 @@ def test_a_failing_boundary_check_raises_flowerror(monkeypatch, hf_project, sile
 
     with pytest.raises(FlowError, match="video.codec"):
         caption(silence_mid, hf_project, tmp_path)
+
+
+def test_caption_names_the_missing_tool_before_touching_the_filesystem(
+    silence_mid, tmp_path, monkeypatch
+):
+    """A missing hyperframes used to surface as a raw FileNotFoundError out of
+    subprocess — after caption() had already copied the source into the
+    project's assets directory. Spec §5 wants a named failure at startup."""
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    project = tmp_path / "project"
+    monkeypatch.setenv("PATH", str(empty))
+
+    with pytest.raises(ToolError) as exc:
+        caption(silence_mid, project, tmp_path / "out")
+
+    assert "hyperframes" in str(exc.value)
+    assert "npm install -g hyperframes" in str(exc.value)
+    assert not (project / "assets" / "input.mp4").exists(), (
+        "caption() copied the source before checking its tool was present"
+    )
+
+
+def test_a_stage_whose_binary_cannot_start_reports_the_stage(tmp_path):
+    """_run() let OSError escape unwrapped, so the caller saw neither which
+    stage failed nor which binary it was trying to run."""
+    with pytest.raises(FlowError) as exc:
+        _run(["definitely-not-a-real-binary-xyz"], "phantom stage")
+    assert "phantom stage" in str(exc.value)
+    assert "definitely-not-a-real-binary-xyz" in str(exc.value)

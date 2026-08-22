@@ -17,7 +17,7 @@ from pathlib import Path
 
 from cutline import edl as edl_mod
 from cutline.probe import MediaInfo, probe
-from cutline.tools import require_auto_editor
+from cutline.tools import require_auto_editor, require_hyperframes
 from cutline.verify import CUT_POLICY, Report, verify
 
 # Keeping at least this fraction of the source means the cut is effectively a
@@ -85,7 +85,13 @@ class StageResult:
 
 
 def _run(argv: list[str], what: str, cwd: Path | None = None) -> None:
-    proc = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
+    except OSError as exc:
+        # Without this, a binary that is missing or not executable escaped as a
+        # bare FileNotFoundError from subprocess, naming neither the stage nor
+        # the tool — spec §5 requires the failure to name what was being run.
+        raise FlowError(f"{what} could not start: {argv[0]!r} — {exc}") from exc
     if proc.returncode != 0:
         raise FlowError(f"{what} failed (exit {proc.returncode}):\n{proc.stderr.strip()}")
 
@@ -306,6 +312,11 @@ def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
     """
     from cutline.verify import COMPOSITE_POLICY
 
+    # Resolve and pin BEFORE touching the filesystem: spec §5 wants a missing
+    # tool to fail at startup naming the tool, not part-way through after the
+    # source has already been copied into the project's assets directory.
+    tool = require_hyperframes()
+
     source, project_dir, out_dir = Path(source), Path(project_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     assets = project_dir / "assets"
@@ -320,7 +331,7 @@ def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
     # from elsewhere with the project passed positionally, it still wrote into
     # <cwd>/renders/, not <project_dir>/renders/. Set cwd explicitly so the
     # render lands where `renders` above expects to find it.
-    _run(["hyperframes", "render"], "hyperframes render", cwd=project_dir)
+    _run([str(tool.path), "render"], "hyperframes render", cwd=project_dir)
 
     new = sorted(set(renders.glob("*.mp4")) - existing) if renders.exists() else []
     if not new:

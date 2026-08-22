@@ -7,12 +7,17 @@ runner = CliRunner()
 
 
 @pytest.mark.requires_auto_editor
+@pytest.mark.requires_hyperframes
 def test_doctor_lists_every_tool_and_version():
-    """Needs the auto-editor binary. CI installs only ffmpeg, so this is
-    marked and deselected there — see Task 9."""
+    """Needs the auto-editor and hyperframes binaries. CI installs only ffmpeg,
+    so this is marked and deselected there — see Task 9.
+
+    Spec §4 assigns tools.py all four tools; `doctor` printed three rows and
+    hyperframes was in neither it nor discover()."""
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "auto-editor" in result.stdout
+    for tool in ("ffmpeg", "ffprobe", "auto-editor", "hyperframes"):
+        assert tool in result.stdout, f"doctor did not report {tool}"
     assert "31.5.0" in result.stdout
 
 

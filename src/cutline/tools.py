@@ -16,6 +16,32 @@ from pathlib import Path
 AUTO_EDITOR_VERSION = "31.5.0"
 FFMPEG_MIN = "8."
 
+# hyperframes is pinned to its MINOR series, not to an exact build like
+# auto-editor. Two reasons, both measured rather than assumed:
+#
+#   * the two measurements available disagree. The final-review brief recorded
+#     0.8.7 installed; `hyperframes --version` on this machine reports 0.8.9
+#     and `npm ls -g` confirms hyperframes@0.8.9. An exact pin would therefore
+#     have refused to run on one of the two environments that ratified it.
+#   * what cutline depends on is the render CLI's shape — `hyperframes render`,
+#     the `renders/<name>.mp4` output path, and `data-no-timeline` — not an
+#     export format the way auto-editor's exact pin protects `--export v3`.
+#
+# A 0.9 or 1.x bump still refuses, which is the drift this is here to catch.
+HYPERFRAMES_MIN = "0.8."
+
+# Spec §5: a missing tool must "fail at startup, naming the tool AND how to
+# install it". The name alone was all find_tool gave.
+INSTALL_HINTS = {
+    "ffmpeg": "brew install ffmpeg, or your distribution's ffmpeg package",
+    "ffprobe": "ships with ffmpeg: brew install ffmpeg, or your distro's package",
+    "auto-editor": (
+        "download the Nim binary from "
+        "https://github.com/WyattBlue/auto-editor/releases — NOT pip"
+    ),
+    "hyperframes": "npm install -g hyperframes",
+}
+
 
 class ToolError(RuntimeError):
     """A required external tool is missing, wrong, or unusable."""
@@ -48,6 +74,11 @@ def _version_of(name: str, path: Path) -> str:
     return match.group(1)
 
 
+def _install_hint(name: str) -> str:
+    hint = INSTALL_HINTS.get(name)
+    return f"Install it: {hint}" if hint else "No install hint is recorded for this tool."
+
+
 def find_tool(name: str, min_version: str | None = None) -> Tool:
     """Locate `name` on PATH and read its version.
 
@@ -56,7 +87,7 @@ def find_tool(name: str, min_version: str | None = None) -> Tool:
     """
     found = shutil.which(name)
     if found is None:
-        raise ToolError(f"required tool not found on PATH: {name}")
+        raise ToolError(f"required tool not found on PATH: {name}. {_install_hint(name)}")
     path = Path(found)
     version = _version_of(name, path)
     if min_version and not version.startswith(min_version):
@@ -79,7 +110,9 @@ def require_auto_editor() -> Tool:
     """
     found = shutil.which("auto-editor")
     if found is None:
-        raise ToolError("required tool not found on PATH: auto-editor")
+        raise ToolError(
+            f"required tool not found on PATH: auto-editor. {_install_hint('auto-editor')}"
+        )
     path = Path(found)
     sibling_python = path.parent / "python"
     if sibling_python.exists():
@@ -97,10 +130,23 @@ def require_auto_editor() -> Tool:
     return tool
 
 
+def require_hyperframes() -> Tool:
+    """hyperframes, pinned to its minor series — see HYPERFRAMES_MIN.
+
+    flow.caption() shelled `["hyperframes", "render"]` by bare PATH name and
+    nothing located or pinned it, so a missing install surfaced as a raw
+    FileNotFoundError from subprocess rather than spec §5's "fail at startup,
+    naming the tool and how to install it", and a version bump could change the
+    render CLI underneath us unannounced.
+    """
+    return find_tool("hyperframes", HYPERFRAMES_MIN)
+
+
 def discover() -> dict[str, Tool]:
     """Every tool cutline needs, or a ToolError naming the first one missing."""
     return {
         "ffmpeg": find_tool("ffmpeg", FFMPEG_MIN),
         "ffprobe": find_tool("ffprobe", FFMPEG_MIN),
         "auto-editor": require_auto_editor(),
+        "hyperframes": require_hyperframes(),
     }
