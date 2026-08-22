@@ -24,6 +24,24 @@ def _ff(args: list[str]) -> None:
 
 
 def _build(out: Path, volume_filter: str | None = None, itsoffset: float | None = None) -> Path:
+    # CACHED ON DISK, ACROSS RUNS: every fixture generator in this file (this
+    # one and the three below with their own inline `if out.exists()`) writes
+    # once to tests/_fixtures/ and every later call — including in a LATER
+    # pytest invocation, not just this session — returns the pre-existing file
+    # without regenerating it. Editing this function's ffmpeg args, or a
+    # fixture's own generation logic below, has NO EFFECT until the matching
+    # file under tests/_fixtures/ is deleted.
+    #
+    # This is exactly the "test that stays green while asserting nothing"
+    # failure this project exists to catch, one level up: mutating a fixture
+    # generator to prove a positive-control test is load-bearing (Task 9 Step
+    # 5, mutation 4) is INVALID unless you delete the cached output first —
+    # measured live: mutating `rotated` without deleting
+    # tests/_fixtures/rotated.mp4 left test_rotated_actually_carries_rotation
+    # PASSING against the untouched old file. Deleting the cache first made it
+    # correctly go RED. Always `rm` the relevant file(s) under
+    # tests/_fixtures/ before running a mutation check against a fixture, and
+    # restore them (or let them regenerate) before committing.
     if out.exists():
         return out
     args: list[str] = []
@@ -108,6 +126,8 @@ def rotated(fixture_dir: Path) -> Path:
     deprecated `-metadata:s:v rotate=` silently produces no side data at all.
     """
     out = fixture_dir / "rotated.mp4"
+    # Same disk-cache hazard as `_build` above: mutating the two lines below
+    # this check has no effect until tests/_fixtures/rotated.mp4 is deleted.
     if out.exists():
         return out
     flat = _build(fixture_dir / "_rot_flat.mp4")
@@ -128,6 +148,9 @@ def rotated_with_silence(fixture_dir: Path) -> Path:
     at all.
     """
     out = fixture_dir / "rotated_with_silence.mp4"
+    # Same disk-cache hazard as `_build` above: mutating the logic below this
+    # check has no effect until tests/_fixtures/rotated_with_silence.mp4 is
+    # deleted.
     if out.exists():
         return out
     flat = _build(
@@ -157,6 +180,9 @@ def hf_project(fixture_dir: Path) -> Path:
     this case. Measured effect: ~94s per render dropped to ~4s.
     """
     proj = fixture_dir / "hfproj"
+    # Same disk-cache hazard as `_build` above (different check, same trap):
+    # mutating the scaffold below has no effect until tests/_fixtures/hfproj/
+    # is deleted.
     if (proj / "index.html").exists():
         return proj
     proj.mkdir(parents=True, exist_ok=True)
@@ -193,6 +219,8 @@ def black_frame(fixture_dir: Path) -> Path:
     above the limited-range black floor and defeat the point of this fixture.
     """
     out = fixture_dir / "black_frame.mp4"
+    # Same disk-cache hazard as `_build` above: mutating the args below this
+    # check has no effect until tests/_fixtures/black_frame.mp4 is deleted.
     if out.exists():
         return out
     _ff(
