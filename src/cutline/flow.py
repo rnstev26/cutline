@@ -8,6 +8,7 @@ than handing a suspect artifact to the next stage.
 
 from __future__ import annotations
 
+import glob
 import re
 import shutil
 import subprocess
@@ -87,7 +88,14 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     # export by name alone, and `produced[0]` could silently pick the wrong file.
     # Clear this stage's own glob pattern before exporting so the only match
     # left afterward is the one this call just wrote.
-    edl_glob = f"{source.stem}_timeline.*"
+    #
+    # glob.escape on the stem, not the raw stem: a source named `my[1].mp4`
+    # turns `[1]` into a character class, so the pattern matches nothing that
+    # exists. Measured: `cut()` on `my[1].mp4` raised "auto-editor wrote no EDL
+    # matching .../my[1]_timeline.*" while `my[1]_timeline.v3` sat right there,
+    # and the stale-EDL pre-clean above silently swept nothing for the same
+    # reason. auto-editor itself handles the name fine — the bug was ours.
+    edl_glob = f"{glob.escape(source.stem)}_timeline.*"
     for stale in out_dir.glob(edl_glob):
         stale.unlink()
     edl_stem = out_dir / f"{source.stem}_timeline"

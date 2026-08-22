@@ -114,3 +114,28 @@ def test_cut_ignores_a_stale_edl_left_in_the_output_dir(silence_mid, tmp_path):
 
     assert result.edl.total_frames != 1, "cut() picked up the stale 1-frame EDL"
     assert result.edl.total_frames == baseline.edl.total_frames
+
+
+@pytest.mark.requires_auto_editor
+def test_cut_handles_a_source_stem_with_glob_metacharacters(silence_mid, tmp_path):
+    """`my[1].mp4` is an ordinary filename; `[1]` is a glob character class.
+
+    cut() locates auto-editor's EDL by globbing `<stem>_timeline.*`, so an
+    unescaped stem makes the pattern match nothing that exists — measured, the
+    stage raised "auto-editor wrote no EDL matching .../my[1]_timeline.*" with
+    the file present. The Task 6 stale-EDL pre-clean globs the same pattern and
+    was void for the same reason. auto-editor handles the name fine.
+    """
+    awkward = tmp_path / "my[1].mp4"
+    awkward.write_bytes(silence_mid.read_bytes())
+    out_dir = tmp_path / "out"
+
+    result = cut(awkward, out_dir)
+
+    assert result.output.exists()
+    assert result.edl.keeps
+    # The pre-clean must have been able to see its own pattern, too: exactly
+    # one EDL should remain, and a second call must not trip the ambiguity
+    # check by leaving the first one behind.
+    again = cut(awkward, out_dir)
+    assert again.edl.total_frames == result.edl.total_frames
