@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated test fixtures (built by ffmpeg at test time, never committed)
+tests/_fixtures/
+
+# Media — never commit binaries to this repo
+*.mp4
+*.mov
+*.wav
+*.mp3
+*.mkv
+!docs/**/*.png
+
+# Spike outputs — throwaway by definition
+spikes/**/out/
+spikes/**/*.json
+
+# OS
+.DS_Store
