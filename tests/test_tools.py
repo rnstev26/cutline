@@ -16,6 +16,7 @@ def test_find_tool_raises_naming_the_missing_binary():
     assert "definitely-not-a-real-binary" in str(exc.value)
 
 
+@pytest.mark.requires_auto_editor
 def test_require_auto_editor_accepts_the_nim_binary():
     t = require_auto_editor()
     assert t.version == "31.5.0"

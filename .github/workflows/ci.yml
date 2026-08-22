@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ffmpeg is NOT preinstalled on either runner image — measured against
+      # both manifests. It must be installed, and pinned, or a runner-image
+      # bump reddens the suite with no code change.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      # Distro packages cannot be pinned to an exact build across two package
+      # managers, so pin the MAJOR and fail loudly on drift. Without this, a
+      # runner-image bump changes the parsing surface silently and green CI
+      # stops meaning anything about the operator's ffmpeg 8.1.1.
+      - name: Assert ffmpeg major version
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(ffmpeg -version | head -1 | sed -E 's/.*version ([0-9]+)\..*/\1/')
+          echo "ffmpeg major: $v"
+          test "$v" = "8" || { echo "::error::expected ffmpeg 8.x, got $v"; exit 1; }
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Roadmap sync guard
+        run: uv run python scripts/check_roadmap_sync.py
+
+      # auto-editor and hyperframes are not installed on CI. Both dependencies
+      # are expressed as markers (requires_auto_editor, requires_hyperframes),
+      # not file-path deselection, because a marker survives a test file being
+      # renamed or split and a --deselect path does not — see Task 9 report
+      # for the marker-sweep evidence (which tests carry which marker and why).
+      - name: Tests
+        run: |
+          uv run pytest -v \
+            -m "not requires_auto_editor and not requires_hyperframes"

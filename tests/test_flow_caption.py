@@ -6,6 +6,7 @@ from cutline.verify import COMPOSITE_POLICY
 pytestmark = pytest.mark.requires_ffmpeg
 
 
+@pytest.mark.requires_hyperframes
 def test_caption_stage_warns_but_does_not_fail_on_resampled_audio(
     hf_project, silence_mid, tmp_path
 ):
@@ -16,18 +17,24 @@ def test_caption_stage_warns_but_does_not_fail_on_resampled_audio(
     assert any("audio" in w.prop for w in result.report.warnings)
 
 
+@pytest.mark.requires_hyperframes
 def test_caption_stage_uses_the_composite_policy(hf_project, silence_mid, tmp_path):
     result = caption(silence_mid, hf_project, tmp_path)
     assert result.report.boundary == COMPOSITE_POLICY.name
 
 
+@pytest.mark.requires_hyperframes
 def test_caption_output_is_not_a_black_frame(hf_project, silence_mid, tmp_path):
     """A correctly-sized black video passes every metadata assertion."""
     result = caption(silence_mid, hf_project, tmp_path)
     assert mean_luma(result.output) > BLACK_FRAME_LUMA_THRESHOLD
 
 
+@pytest.mark.requires_auto_editor
+@pytest.mark.requires_hyperframes
 def test_run_executes_both_stages_in_order(hf_project, silence_mid, tmp_path):
+    """run() chains cut() (auto-editor) into caption() (hyperframes) — the
+    only test in this project needing both external tools at once."""
     results = run(silence_mid, hf_project, tmp_path)
     assert [r.name for r in results] == ["cut", "caption"]
 
@@ -57,6 +64,7 @@ def test_mean_luma_discriminates_black_from_content(black_frame, silence_mid):
     )
 
 
+@pytest.mark.requires_hyperframes
 def test_caption_raises_flowerror_on_black_output(hf_project, silence_mid, tmp_path, monkeypatch):
     """Proves the guard is WIRED, not just computed and ignored: if mean_luma
     is broken to report a value at or under the threshold, caption() must

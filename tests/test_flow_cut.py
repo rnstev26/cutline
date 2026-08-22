@@ -9,6 +9,7 @@ from cutline.verify import Change, Report
 pytestmark = pytest.mark.requires_ffmpeg
 
 
+@pytest.mark.requires_auto_editor
 def test_cut_produces_a_shorter_verified_artifact(silence_mid, tmp_path):
     result = cut(silence_mid, tmp_path)
     assert result.output.exists()
@@ -17,6 +18,7 @@ def test_cut_produces_a_shorter_verified_artifact(silence_mid, tmp_path):
     assert result.report.ok, str(result.report)
 
 
+@pytest.mark.requires_auto_editor
 def test_cut_preserves_rotation_and_the_boundary_proves_it(rotated_with_silence, tmp_path):
     """auto-editor preserves rotation (measured). The check must confirm it
     rather than assume it — this is the boundary that would catch a regression.
@@ -39,6 +41,7 @@ def test_cut_preserves_rotation_and_the_boundary_proves_it(rotated_with_silence,
     assert result.report.ok, str(result.report)
 
 
+@pytest.mark.requires_auto_editor
 def test_cut_returns_a_parsed_edl_in_frames(silence_mid, tmp_path):
     result = cut(silence_mid, tmp_path)
     assert result.edl.keeps
@@ -46,12 +49,14 @@ def test_cut_returns_a_parsed_edl_in_frames(silence_mid, tmp_path):
     assert result.edl.timebase.num > 0
 
 
+@pytest.mark.requires_auto_editor
 def test_cut_on_continuous_audio_keeps_everything(no_silence, tmp_path):
     result = cut(no_silence, tmp_path)
     before, after = probe(no_silence), probe(result.output)
     assert after.duration == pytest.approx(before.duration, abs=0.3)
 
 
+@pytest.mark.requires_auto_editor
 def test_no_op_cut_short_circuits_without_re_encoding(no_silence, tmp_path):
     """Spec 5: keeps ~ 100% must not re-encode. A re-encode for a zero-benefit
     cut is pure generation loss, so the output must be byte-identical."""
@@ -64,6 +69,7 @@ def test_cut_raises_on_a_missing_source(tmp_path):
         cut(tmp_path / "nope.mp4", tmp_path)
 
 
+@pytest.mark.requires_auto_editor
 def test_a_failing_boundary_check_raises_flowerror(monkeypatch, silence_mid, tmp_path):
     """cut() must not hand a suspect artifact onward when verify() finds a
     violation. auto-editor legitimately preserves every invariant CUT_POLICY
@@ -87,6 +93,7 @@ def test_a_failing_boundary_check_raises_flowerror(monkeypatch, silence_mid, tmp
         cut(silence_mid, tmp_path)
 
 
+@pytest.mark.requires_auto_editor
 def test_cut_ignores_a_stale_edl_left_in_the_output_dir(silence_mid, tmp_path):
     """A stale <stem>_timeline.v1 pre-existing in out_dir must not be picked
     over the fresh export. Reproduces the scenario found in review: sorted()
