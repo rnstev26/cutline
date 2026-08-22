@@ -113,8 +113,15 @@ def silence_to_eof(fixture_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def offset_streams(fixture_dir: Path) -> Path:
-    """Audio starts ~0.48s after video, as a real recorder produces. silencedetect
-    reports the AUDIO timeline; cuts are applied to the VIDEO timeline."""
+    """Audio starts 0.476009s after video; video starts at 0.000000. silencedetect
+    reports the AUDIO timeline; cuts are applied to the VIDEO timeline, so the two
+    diverge by that offset.
+
+    Built with ffmpeg `-itsoffset 0.5`; the request lands at 0.476009 after
+    container timescale rounding. It is SYNTHETIC and is not evidence about real
+    capture hardware — earlier text here and in spec §4.1 read "as a real
+    recorder produces", which attributed this file's own number to a recording
+    nobody measured."""
     return _build(fixture_dir / "offset_streams.mp4", itsoffset=0.5)
 
 

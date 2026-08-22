@@ -80,9 +80,12 @@ probing it, and the test suite asserts on that probe rather than on mocks.
 
 Duration, stream count, frame count and codec are **not sufficient** — that set is precisely what
 the rotation defect above slips through. The checked set also carries width and height, SAR/DAR,
-rotation side data, audio sample rate and channels, and each stream's `start_time` (measured: a
-real recorder yields video `0.000000` and audio `0.476009`; a synthetic fixture yields both at
-zero, so cuts computed on the audio timeline drift when applied to the video timeline).
+rotation side data, audio sample rate and channels, and each stream's `start_time` — because
+cuts computed on the audio timeline drift when applied to the video timeline. Measured on
+`tests/_fixtures/offset_streams.mp4`, a **synthetic** fixture built with ffmpeg `-itsoffset 0.5`:
+video `0.000000`, audio `0.476009`. Earlier revisions of this file and of the spec attributed that
+pair to "a real recorder" and claimed a synthetic fixture yields both at zero; re-measured, both
+clauses were false and **no real-recorder measurement has been taken**.
 
 A per-boundary policy names which properties must be identical and which may legitimately change,
 and **the boundaries differ in kind** — measured, not assumed:

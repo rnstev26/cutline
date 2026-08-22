@@ -1,8 +1,8 @@
 # cutline v1 — Design
 
 **Date:** 2026-08-22
-**Revision:** 2 — supersedes rev 1 of the same date
-**Status:** Ratified direction. Implementation plan pending.
+**Revision:** 3 — supersedes rev 2 of the same date
+**Status:** Ratified direction, **implemented**. See §0.1 for what rev 3 corrected.
 
 ---
 
@@ -28,6 +28,22 @@ EDL, its own renderer. An adversarial review refuted the premise.
    faceless content as HyperFrames' separate concern. The two share every stage after the source.
 
 **cutline therefore orchestrates and verifies. It does not reimplement.**
+
+### 0.1 Rev 3 — one measurement was false
+
+Rev 2's §4.1 stated: *"measured: a real recorder yields video `0.000000` and audio `0.476009`;
+a synthetic fixture yields both at zero."*
+
+Re-measured against `tests/_fixtures/offset_streams.mp4`, which is a **synthetic** fixture built
+with ffmpeg `-itsoffset 0.5`: video `0.000000`, audio `0.476009` — byte-identical to the pair
+attributed to a real recorder. So the second clause was false outright, and the identical value
+says the first clause's "real recorder" was this same synthetic file all along. **No real-recorder
+measurement has ever been taken for this spec.**
+
+The property is still worth checking and the fixture still exercises it; what was wrong was the
+provenance, and provenance is what makes a measurement worth anything. §4.1 now says where the
+number came from. This is the third spec-honesty correction; the standing rule it enforces is that
+a figure must name the artifact it was read off.
 
 ---
 
@@ -219,7 +235,7 @@ defect**. The set is therefore:
 | **SAR / DAR** | catches non-square-pixel mangling |
 | **rotation side data** | the §2 defect proper — present *and* value |
 | audio sample rate, channels | catches resampling |
-| **stream `start_time` per stream** | measured: a real recorder yields video `0.000000` and audio `0.476009`; a synthetic fixture yields both at zero. Cuts computed on the audio timeline and applied to the video timeline drift by that offset. |
+| **stream `start_time` per stream** | measured on `tests/_fixtures/offset_streams.mp4` — a **synthetic** fixture, ffmpeg `-itsoffset 0.5` (the request lands at 0.476009 after container timescale rounding): video `0.000000`, audio `0.476009`. Cuts computed on the audio timeline and applied to the video timeline drift by that offset. **Correction (rev 3):** earlier revisions attributed this pair to "a real recorder" and added "a synthetic fixture yields both at zero". Both clauses were false — re-measured, the synthetic fixture is exactly where the number came from, and **no real-recorder measurement has been taken**. Whether real capture hardware diverges by a similar amount is UNMEASURED. |
 
 A `Policy` names which properties must be *identical* across a boundary and which may legitimately
 change. **The policy is per-boundary, and "nothing may change rotation" is wrong as a global
