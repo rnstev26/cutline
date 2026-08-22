@@ -1,10 +1,13 @@
 # cutline
 
-An EDL-based video pipeline. Deterministic Python core, agent-drivable.
+An EDL-based video pipeline for talking-head footage.
 
-`cutline` removes dead air from talking-head video and produces a verified MP4. It is built
-around a single intermediate representation — an **edit decision list** — so that every
-capability is either a producer or a consumer of that one artifact.
+> **Status: pre-implementation.** The repository currently contains a design specification and
+> nothing else — no source, no tests, no CI. Everything below the Roadmap heading describes
+> intended behaviour, not shipped behaviour. Claims in this README are marked accordingly.
+
+`cutline` is designed around a single intermediate representation — an **edit decision list** —
+so that every capability is either a producer or a consumer of that one artifact.
 
 ```
    [producers]              [the seam]            [consumers]
@@ -14,10 +17,20 @@ capability is either a producer or a consumer of that one artifact.
  human editor (v3) ─┘       keep-segments     └──→ probe / report
 ```
 
-## Status
+## Roadmap
 
-**v0.1.0 — in development.** The design is specified in
+Nothing here has shipped. Each version's acceptance criterion is what defines it as done.
+
+| version | adds | done when |
+|---|---|---|
+| **v1** | dead-air cut → verified MP4, CLI, tests, CI | a real recording renders with cuts applied, verified by probe on duration, frame count, codec **and geometry**; suite proven able to go red |
+| v2 | transcript spine; filler-word cutting; captions | a transcript-derived EDL renders, and captions land via HyperFrames |
+| v3 | MCP server — the agent layer | an agent completes cut→caption end to end without a human running a command |
+
+The design is specified in
 [`docs/specs/2026-08-22-cutline-v1-design.md`](docs/specs/2026-08-22-cutline-v1-design.md).
+That spec is under revision following an adversarial review; treat it as the record of intent,
+not of shipped behaviour.
 
 ## Why an EDL
 
