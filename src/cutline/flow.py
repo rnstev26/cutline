@@ -8,6 +8,7 @@ than handing a suspect artifact to the next stage.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -37,8 +38,8 @@ class StageResult:
     after: MediaInfo | None = None
 
 
-def _run(argv: list[str], what: str) -> None:
-    proc = subprocess.run(argv, capture_output=True, text=True)
+def _run(argv: list[str], what: str, cwd: Path | None = None) -> None:
+    proc = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
     if proc.returncode != 0:
         raise FlowError(f"{what} failed (exit {proc.returncode}):\n{proc.stderr.strip()}")
 
@@ -130,3 +131,91 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     return StageResult(
         name="cut", output=rendered, report=report, edl=parsed, before=before, after=after
     )
+
+
+def mean_luma(path: Path) -> float:
+    """Average brightness, as a cheap 'is there actually a picture here' check.
+
+    A correctly-sized, correctly-encoded black video satisfies every metadata
+    assertion, so metadata alone cannot tell you the render worked.
+    """
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-f", "lavfi",
+         "-i", f"movie={path},signalstats",
+         "-show_entries", "frame_tags=lavfi.signalstats.YAVG",
+         "-of", "csv=p=0", "-read_intervals", "%+#20"],
+        capture_output=True, text=True,
+    )
+    # ffprobe's csv=p=0 output measured to carry a stray trailing comma on its
+    # first line (e.g. "31.7971,\n31.7971\n..."); splitting on whitespace alone
+    # leaves that comma attached and float() raises on it. Split on comma OR
+    # whitespace so every row parses regardless of where the comma lands.
+    values = [float(v) for v in re.split(r"[,\s]+", proc.stdout) if v.strip()]
+    if not values:
+        raise FlowError(f"could not measure luma for {path}")
+    return sum(values) / len(values)
+
+
+def caption(source: Path, project_dir: Path, out_dir: Path) -> StageResult:
+    """Composite captions over `source` using a HyperFrames project.
+
+    HyperFrames is a re-composite: it consumes rotation into its canvas, takes
+    the composition's duration, and resamples audio. COMPOSITE_POLICY treats
+    those as warnings. A missing artifact or a black frame is a failure.
+    """
+    from cutline.verify import COMPOSITE_POLICY
+
+    source, project_dir, out_dir = Path(source), Path(project_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    assets = project_dir / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, assets / "input.mp4")
+
+    before = probe(source)
+    renders = project_dir / "renders"
+    existing = set(renders.glob("*.mp4")) if renders.exists() else set()
+    # `hyperframes render` resolves its default output path (renders/<name>.mp4)
+    # against the PROCESS cwd, not the DIR argument it was given — measured: run
+    # from elsewhere with the project passed positionally, it still wrote into
+    # <cwd>/renders/, not <project_dir>/renders/. Set cwd explicitly so the
+    # render lands where `renders` above expects to find it.
+    _run(["hyperframes", "render"], "hyperframes render", cwd=project_dir)
+
+    new = sorted(set(renders.glob("*.mp4")) - existing) if renders.exists() else []
+    if not new:
+        raise FlowError(f"hyperframes reported success but wrote no new mp4 in {renders}")
+    produced = new[-1]
+    final = out_dir / f"{source.stem}_captioned.mp4"
+    shutil.copyfile(produced, final)
+
+    after = probe(final)
+    report = verify(before, after, COMPOSITE_POLICY)
+    if not report.ok:
+        raise FlowError(f"caption stage did not survive verification:\n{report}")
+    if mean_luma(final) <= 5.0:
+        raise FlowError(f"caption stage produced an essentially black video: {final}")
+
+    return StageResult(name="caption", output=final, report=report,
+                       before=before, after=after)
+
+
+def run(source: Path, project_dir: Path, out_dir: Path) -> list[StageResult]:
+    """The v1 flow: cut, verify, caption, verify.
+
+    Spec 5, interrupt policy: on failure or interruption the last VERIFIED
+    artifact stays on disk and the error names the stage that completed, so a
+    long run is resumable rather than lost. Stages are therefore accumulated as
+    they succeed, not collected at the end.
+    """
+    done: list[StageResult] = []
+    try:
+        done.append(cut(source, out_dir))
+        done.append(caption(done[-1].output, project_dir, out_dir))
+    except (FlowError, KeyboardInterrupt) as exc:
+        completed = ", ".join(r.name for r in done) or "none"
+        last = done[-1].output if done else source
+        raise FlowError(
+            f"flow stopped during stage {len(done) + 1}. Completed: {completed}. "
+            f"Last verified artifact: {last}. Cause: {exc}"
+        ) from exc
+    return done

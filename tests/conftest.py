@@ -136,3 +136,36 @@ def rotated_with_silence(fixture_dir: Path) -> Path:
     )
     _ff(["-display_rotation", "90", "-i", str(flat), "-c", "copy", str(out)])
     return out
+
+
+@pytest.fixture(scope="session")
+def hf_project(fixture_dir: Path) -> Path:
+    """A minimal HyperFrames project whose composition plays `assets/input.mp4`.
+
+    Scaffolded once per session; the flow copies each stage's input over
+    assets/input.mp4 before rendering.
+    """
+    proj = fixture_dir / "hfproj"
+    if (proj / "index.html").exists():
+        return proj
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "assets").mkdir(exist_ok=True)
+    (proj / "hyperframes.json").write_text(
+        '{"paths": {"blocks": "compositions", "assets": "assets"}}\n'
+    )
+    (proj / "index.html").write_text("""<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<style>*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
+#footage{position:absolute;inset:0}#footage video{width:100%;height:100%;object-fit:contain}
+#cap{position:absolute;bottom:120px;left:0;right:0;text-align:center;
+font-size:64px;font-weight:700;color:#fff}</style></head>
+<body><div id="root" data-composition-id="main" data-start="0" data-duration="6"
+data-width="1920" data-height="1080">
+<div id="footage" class="clip" data-start="0" data-duration="6" data-track-index="0">
+<video src="assets/input.mp4" data-media data-start="0" data-duration="6"></video></div>
+<div id="cap" class="clip" data-start="0" data-duration="6" data-track-index="1">caption</div>
+</div></body></html>
+""")
+    return proj
