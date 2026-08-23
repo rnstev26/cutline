@@ -29,12 +29,19 @@ FFMPEG_FLOOR = "6"
 # hyperframes is pinned to its MINOR series, not to an exact build like
 # auto-editor. Two reasons, both measured rather than assumed:
 #
-#   * the version MOVED under us during this project's development, on this
-#     same machine, with no action taken to upgrade it: `hyperframes doctor`
-#     reported 0.8.7 (latest) early on, and 0.8.9 (latest) hours later. That is
-#     a stronger case for a series pin than two environments disagreeing would
-#     have been — it is evidence the tool upgrades itself unattended, not just
-#     that two machines happened to differ.
+#   * the version MOVES under us, unattended, on a timescale of hours, not
+#     months: observed changing THREE times in one working day (2026-08-22/23)
+#     on this same machine — the last move happened while a comment about the
+#     previous one was being written, which is why this comment no longer
+#     cites version numbers as evidence. Any specific pair quoted here would
+#     already be stale by the time it was read; the pattern is the durable
+#     fact, not the numbers. The practical symptom is that the binary is
+#     briefly unresolvable mid-update, which surfaces as intermittent
+#     tool-not-found failures in tool-discovery tests — real, not a flaky
+#     test, if you see it again. An exact pin would have broken three times in
+#     a single day; a series pin absorbs all three and still refuses a 0.9 or
+#     1.x bump. Confirmed: this pin accepted 0.8.10, the latest of the three
+#     moves, with no change required.
 #   * what cutline depends on is the render CLI's shape — `hyperframes render`,
 #     the `renders/<name>.mp4` output path, and `data-no-timeline` — not an
 #     export format the way auto-editor's exact pin protects `--export v3`.
