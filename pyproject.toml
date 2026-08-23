@@ -38,7 +38,6 @@ markers = [
     "requires_ffmpeg: test shells out to a real ffmpeg/ffprobe binary",
     "requires_auto_editor: test needs the auto-editor binary, which CI does not install",
     "requires_hyperframes: test needs the hyperframes CLI, which CI does not install",
-    "requires_pinned_ffmpeg: test asserts FFMPEG_MIN itself; CI runners ship 6.1.1, not 8.x",
 ]
 
 [tool.ruff]

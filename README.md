@@ -79,7 +79,8 @@ loudly, naming the offending segment — not internal bugs.
 ## Requirements
 
 - Python ≥ 3.12 (managed by [uv](https://docs.astral.sh/uv/); your system Python is untouched)
-- `ffmpeg` and `ffprobe` on `PATH` — pinned to **8.x** by `tools.FFMPEG_MIN`
+- `ffmpeg` and `ffprobe` on `PATH` — **6.0 or newer**, enforced as a floor by
+  `tools.FFMPEG_FLOOR` (not a series pin: 9.x and later are accepted)
 - [auto-editor](https://github.com/WyattBlue/auto-editor) **31.5.0**, exactly — **installed from
   GitHub releases, not pip.** auto-editor was rewritten in Nim; PyPI still serves a dead Python
   branch last published 2025-11-04. cutline detects a pip-installed auto-editor and refuses to run.

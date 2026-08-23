@@ -3,8 +3,8 @@ import re
 import pytest
 
 from cutline.tools import (
-    FFMPEG_MIN,
-    HYPERFRAMES_MIN,
+    FFMPEG_FLOOR,
+    HYPERFRAMES_SERIES,
     Tool,
     ToolError,
     discover,
@@ -12,11 +12,6 @@ from cutline.tools import (
     require_auto_editor,
     require_hyperframes,
 )
-
-# ubuntu-latest is Ubuntu 24.04, which ships ffmpeg 6.1.1. No Ubuntu release
-# ships 8.x, so an equality on the operator's major could never hold in CI —
-# and a test that can never pass there trains everyone to ignore CI.
-CI_FFMPEG_FLOOR = 6
 
 
 def test_find_tool_returns_path_and_version():
@@ -35,19 +30,46 @@ def test_find_tool_returns_path_and_version():
     assert re.fullmatch(r"\d+\.\d+(\.\d+)?", t.version), (
         f"cutline parsed {t.version!r} out of `ffprobe --version` — not a version"
     )
-    assert int(t.version.split(".")[0]) >= CI_FFMPEG_FLOOR
+    assert int(t.version.split(".")[0]) >= int(FFMPEG_FLOOR)
 
 
-@pytest.mark.requires_pinned_ffmpeg
-def test_the_operators_ffmpeg_pin_is_satisfiable_here():
-    """The pin itself, kept under test on the machine the pin describes.
+def test_ffmpeg_meets_its_own_floor_everywhere_cutline_runs():
+    """FFMPEG_FLOOR replaces what used to be a `requires_pinned_ffmpeg`-marked,
+    CI-deselected test asserting an 8.x SERIES pin the Linux runner (6.1.1)
+    could never satisfy.
 
-    FFMPEG_MIN is "8." and the CI runners ship 6.1.1, so this is deselected in
-    CI rather than relaxed here. Deselecting is the honest move: relaxing it
-    would leave nothing anywhere asserting that the pin discover() enforces can
-    actually be met.
+    A floor is a different guarantee than a series pin, and it is satisfiable
+    everywhere cutline runs, including ubuntu-latest — so unlike its
+    predecessor this test carries no marker and is never deselected: if
+    find_tool raises here, FFMPEG_FLOOR has been set above what a runner
+    actually ships, and this is the test that says so honestly rather than a
+    marker quietly hiding the gap.
     """
-    assert find_tool("ffprobe", FFMPEG_MIN).version.startswith(FFMPEG_MIN)
+    tool = find_tool("ffmpeg", floor=FFMPEG_FLOOR)
+    assert isinstance(tool, Tool)
+
+
+def test_a_below_floor_ffmpeg_is_refused(tmp_path, monkeypatch):
+    """The floor has to be able to refuse, or it is decoration."""
+    fake = tmp_path / "ffmpeg"
+    fake.write_text("#!/bin/sh\necho 5.1.3\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(ToolError, match="5.1.3"):
+        find_tool("ffmpeg", floor=FFMPEG_FLOOR)
+
+
+def test_an_above_floor_ffmpeg_is_accepted(tmp_path, monkeypatch):
+    """The defect this fixes: the old prefix-equality check
+    (`version.startswith("8.")`) refused ffmpeg 9.x outright. A real floor
+    must accept anything at or above it, including a major cutline has never
+    been tested against."""
+    fake = tmp_path / "ffmpeg"
+    fake.write_text("#!/bin/sh\necho 9.0.2\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    tool = find_tool("ffmpeg", floor=FFMPEG_FLOOR)
+    assert tool.version == "9.0.2"
 
 
 def test_find_tool_raises_naming_the_missing_binary():
@@ -81,7 +103,7 @@ def test_require_hyperframes_locates_and_pins_it():
     flow.caption() shelled it by bare PATH name."""
     t = require_hyperframes()
     assert t.path.exists()
-    assert t.version.startswith(HYPERFRAMES_MIN)
+    assert t.version.startswith(HYPERFRAMES_SERIES)
 
 
 @pytest.mark.requires_auto_editor

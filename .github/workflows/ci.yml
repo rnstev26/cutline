@@ -38,42 +38,28 @@ jobs:
       # reason no code change could fix — Ruling B's own stated failure mode,
       # "CI red on a test that can never pass there trains everyone to ignore CI".
       #
-      # Pinning to 8 on Linux needs a static build or a PPA: a new network
-      # dependency whose own outage reddens CI for an unrelated reason. So this
-      # step asserts what a distro package can actually deliver — a FLOOR — plus
-      # the thing cutline actually depends on, which is that its own version
-      # parser can read this build. It runs cutline.tools.find_tool rather than a
-      # reimplemented sed, so the check and the runtime use the same parser.
-      #
-      # DELIBERATELY NOT PAPERED OVER: tools.FFMPEG_MIN is still "8.", so
-      # discover() / `cutline doctor` would REFUSE the Linux runner's ffmpeg
-      # 6.1.1. Nothing in the CI selection calls discover() — test_doctor carries
-      # requires_auto_editor and is deselected — so this does not redden
-      # anything, but green CI here does NOT prove cutline would run on this
-      # runner. Whether FFMPEG_MIN should become a floor is a contract decision,
-      # not a CI one.
-      - name: Assert ffmpeg parses and meets the CI floor (NOT the operator's 8.x pin)
+      # tools.FFMPEG_FLOOR is now "6", a real floor rather than a series pin —
+      # measured against cutline's own source (nothing newer than ~ffmpeg 3) and
+      # its test fixtures (-display_rotation, ffmpeg 6.0). This step therefore
+      # calls cutline's own find_tool(floor=FFMPEG_FLOOR) instead of
+      # reimplementing the floor comparison in a heredoc: CI now exercises the
+      # exact code path `cutline doctor` runs, not a parallel copy of it that
+      # could quietly drift from the library.
+      - name: Assert ffmpeg meets cutline's floor (the same check `cutline doctor` runs)
         shell: bash
         run: |
           uv run python - <<'PY'
-          import re
           import sys
 
-          from cutline.tools import find_tool
-
-          CI_FLOOR = 6  # Ubuntu 24.04, the ubuntu-latest image, ships 6.1.1
+          from cutline.tools import FFMPEG_FLOOR, ToolError, find_tool
 
           for name in ("ffmpeg", "ffprobe"):
-              tool = find_tool(name)
+              try:
+                  tool = find_tool(name, floor=FFMPEG_FLOOR)
+              except ToolError as exc:
+                  print(f"::error::{exc}")
+                  sys.exit(1)
               print(f"{name}: {tool.version}  ({tool.path})")
-              if not re.fullmatch(r"\d+\.\d+(\.\d+)?", tool.version):
-                  print(f"::error::cutline parsed {tool.version!r} out of {name} "
-                        "--version; that is not a version")
-                  sys.exit(1)
-              major = int(tool.version.split(".")[0])
-              if major < CI_FLOOR:
-                  print(f"::error::{name} {tool.version} is below the CI floor of {CI_FLOOR}")
-                  sys.exit(1)
           PY
 
       - name: Lint
@@ -88,11 +74,13 @@ jobs:
       # renamed or split and a --deselect path does not — see Task 9 report
       # for the marker-sweep evidence (which tests carry which marker and why).
       #
-      # requires_pinned_ffmpeg is the third: the operator's FFMPEG_MIN pin is
-      # 8.x and the Linux runner has 6.1.1, so the test that asserts the pin is
-      # satisfiable is deselected HERE rather than weakened THERE. That keeps
-      # the pin under test on the machine the pin describes.
+      # There used to be a third marker here, requires_pinned_ffmpeg, deselecting
+      # a test that asserted the operator's old 8.x SERIES pin was satisfiable —
+      # a pin the Linux runner's 6.1.1 could never meet. Now that FFMPEG_FLOOR is
+      # a real floor of 6, that test (and every other ffmpeg/ffprobe test) is
+      # satisfiable on every runner cutline supports, so nothing needs deselecting
+      # for it anymore.
       - name: Tests
         run: |
           uv run pytest -v \
-            -m "not requires_auto_editor and not requires_hyperframes and not requires_pinned_ffmpeg"
+            -m "not requires_auto_editor and not requires_hyperframes"
