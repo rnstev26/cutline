@@ -1,0 +1,131 @@
+name: upstream-check
+
+# The version pin in tools.HYPERFRAMES_SERIES is a speed bump, not a
+# guarantee -- see the comment above it in src/cutline/tools.py. This
+# workflow is the actual gate: it installs whatever hyperframes@latest
+# resolves to THIS week, deliberately outside the pin, and runs the
+# contract tests in tests/test_hyperframes_contract.py against it.
+#
+# It REPORTS. It never bumps the pin, never commits, never pushes. A human
+# reads the result (in the run summary, or the issue this opens on failure)
+# and decides whether to update HYPERFRAMES_SERIES in tools.py by hand.
+# That separation is the whole point: an automated pin bump would be exactly
+# as blind as the series pin it would be replacing.
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC. Also runnable by hand at any time.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ffmpeg is NOT preinstalled on ubuntu-latest -- same as ci.yml.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Deliberately @latest, not the pinned series -- this is the one place
+      # in the project that is SUPPOSED to install outside tools.py's pin.
+      - name: Install hyperframes@latest
+        run: npm install -g hyperframes@latest
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      # Recorded on EVERY run, pass or fail, so there is a standing history
+      # of what version was actually tested -- not just what the pin claims.
+      - name: Record the resolved hyperframes version
+        id: hf
+        run: |
+          RAW="$(hyperframes --version)"
+          VERSION="$(printf '%s' "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          if [ -z "$VERSION" ]; then
+            VERSION="unparseable ($RAW)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "### hyperframes upstream-check"
+            echo ""
+            echo "Resolved \`hyperframes@latest\` to **$VERSION** on $(date -u +%Y-%m-%d)."
+            echo "cutline's pin (\`tools.HYPERFRAMES_SERIES\`) accepts the \`0.8.\` series."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the hyperframes contract tests
+        id: contract
+        continue-on-error: true
+        run: |
+          uv run pytest -v -m requires_hyperframes tests/test_hyperframes_contract.py \
+            2>&1 | tee contract-output.txt
+
+      - name: Record the result in the run summary
+        run: |
+          {
+            echo ""
+            echo "Contract tests: **${{ steps.contract.outcome }}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check for an existing open issue for this version
+        if: steps.contract.outcome == 'failure'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="hyperframes ${{ steps.hf.outputs.version }} broke the cutline contract"
+          FOUND="$(gh issue list --state open --json title \
+            --jq ".[] | select(.title == \"$TITLE\") | .title" | head -1)"
+          if [ -n "$FOUND" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Never touches the pin, never commits, never pushes -- it names the
+      # version and what broke, and leaves the decision to a human.
+      - name: Open an issue naming the version and what failed
+        if: steps.contract.outcome == 'failure' && steps.existing.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="hyperframes ${{ steps.hf.outputs.version }} broke the cutline contract"
+          {
+            echo "\`hyperframes@latest\` resolved to **${{ steps.hf.outputs.version }}** in the"
+            echo "scheduled upstream-check run, and one or more of"
+            echo "\`tests/test_hyperframes_contract.py\`'s six shape assumptions failed against it."
+            echo ""
+            echo "cutline's pin (\`tools.HYPERFRAMES_SERIES\` = \`\"0.8.\"\`) still refuses this"
+            echo "version, so normal builds are unaffected. This issue is advance notice for"
+            echo "when someone deliberately tries to move the pin."
+            echo ""
+            echo "### What to do"
+            echo "1. Read the failing test's diagnostic below -- it names which specific"
+            echo "   assumption moved, not just that something broke."
+            echo "2. \`npm install -g hyperframes@latest && uv run pytest -m requires_hyperframes\`"
+            echo "   locally to reproduce."
+            echo "3. If the failure is a welcome change (a quirk got fixed), simplify the"
+            echo "   affected code. If it's a real break, decide whether to adapt cutline or"
+            echo "   wait for a fix, then bump \`HYPERFRAMES_SERIES\` by hand -- never here."
+            echo ""
+            echo "### Test output"
+            echo '```'
+            tail -c 60000 contract-output.txt
+            echo '```'
+          } > issue-body.md
+          gh issue create --title "$TITLE" --body-file issue-body.md
+
+      - name: Fail the job if the contract broke
+        if: steps.contract.outcome == 'failure'
+        run: exit 1
