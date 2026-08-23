@@ -315,11 +315,18 @@ trains everyone to ignore CI".
 
 CI currently asserts a **floor** of 6 plus the version-parsing surface, using
 `cutline.tools.find_tool` so the check exercises the same parser the runtime does, and the step
-name says floor rather than pin. `tools.FFMPEG_MIN` is unchanged at `"8."`, so `discover()` would
-still refuse the runner's build; no CI-selected test calls `discover()`, so this does not redden
-anything, but **green CI does not prove cutline would run on that runner**. Closing that gap needs
-either a static-build/PPA install step on Linux or a decision to turn `FFMPEG_MIN` into a floor.
-**That is an open contract decision, deliberately not taken here** — recorded in §13.
+name says floor rather than pin.
+
+**RESOLVED 2026-08-23 — measurement and ruling in §13.4.** `tools.FFMPEG_MIN` became
+`tools.FFMPEG_FLOOR = "6"`: a real floor (version >= floor), not the prefix-equality series pin
+`"8."` was silently being checked as. `find_tool` now takes an explicit `floor=` or `series=`
+parameter instead of one ambiguous `min_version`, so the two semantics can no longer be confused
+at the call site. `discover()` / `cutline doctor` now **accept** the runner's ffmpeg — measured
+live in CI shipping **6.1.1** — where the old `"8."` prefix pin would have refused it, and would
+equally have refused ffmpeg **9**, since prefix equality cannot express "at least." The CI step
+itself now calls `find_tool(floor=FFMPEG_FLOOR)` directly rather than reimplementing the
+comparison inline, so CI exercises cutline's own code path, not a parallel copy of it. **Green CI
+now proves cutline would run on the runner it went green on.**
 
 ---
 
@@ -455,16 +462,26 @@ out-of-range segments, §3.1 catches it as input validation.
    orientation is **correct** (verified by frame extraction against a reference). §2 and §4.1
    carry the detail and the corrected per-boundary policy. **Residual:** whether an unintended
    pillarbox should warn or fail is a judgement call, currently specified as *warn*.
-4. **Version-pin range policy** — exact pin or floor? Exact is safer and noisier; unresolved, and
-   rev 3 has now hit it in three places at once, so it needs an actual ruling:
-   - **ffmpeg:** `FFMPEG_MIN = "8."` cannot be met by `ubuntu-latest` (6.1.1). Either install a
-     static build / PPA on Linux, or make `FFMPEG_MIN` a floor. Until then green CI does not prove
-     cutline would run on the runner it went green on (§6, CI).
-   - **auto-editor:** exact `31.5.0`, because the pin protects a measured export-format surface.
-     That one is settled and should stay exact.
-   - **hyperframes:** pinned to the `0.8.` series rather than exactly, because the two available
-     measurements disagreed — the review brief recorded 0.8.7 and the machine reports 0.8.9. An
-     exact pin would have refused one of the two environments that ratified the work.
+4. ~~**Version-pin range policy** — exact pin or floor?~~ **ANSWERED 2026-08-23.** Rev 3 hit
+   this in three places at once; each now has a shipped ruling:
+   - **ffmpeg: a floor of 6.** Measured: cutline's own source uses only `signalstats`,
+     `blackframe`, `metadata=print`, `movie=`, `read_intervals`, `-show_streams` and
+     `-show_format` — nothing newer than roughly ffmpeg 3. The newest feature anywhere in the
+     project is `-display_rotation`, which is **tests-only** (fixture generation in
+     `tests/conftest.py`) and landed in ffmpeg 6.0 — hence a floor of 6, measured against the test
+     suite rather than assumed from the runtime. `FFMPEG_MIN = "8."` (prefix equality, not a
+     floor) is now `FFMPEG_FLOOR = "6"`, checked as a real floor by `find_tool(floor=...)`.
+     `ubuntu-latest` was measured live in CI shipping **6.1.1**, which the old `"8."` prefix pin
+     would have refused — and would equally have refused ffmpeg **9**, since prefix equality
+     cannot express "at least" (§6, CI).
+   - **auto-editor: exact `31.5.0`, unchanged.** The pin protects a measured export-format
+     surface; that ruling was already settled and stays exact.
+   - **hyperframes: the `0.8.` series, unchanged** — but not for the reason first given here. Not
+     because two measurements once disagreed (a review-brief figure vs. this machine's output);
+     that framing didn't survive a third data point. The actual reason: the version moves under us
+     repeatedly and unattended — observed three times in one working day, 2026-08-22/23, on this
+     same machine (see the comment above `HYPERFRAMES_SERIES` in `tools.py`) — which a series pin
+     absorbs and an exact pin would not.
 5. **`COMPOSITE_POLICY.invariant` is a single property, `video.codec`. This is a v2 design item,
    not a v1 defect.** The caption stage's stop-the-flow gate is now under test (it was not, and
    could be deleted with the whole suite green), but even wired correctly it can only fire on a

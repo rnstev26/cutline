@@ -146,12 +146,15 @@ uv run pytest -m "not requires_auto_editor and not requires_hyperframes"
 ```
 
 CI is configured for `ubuntu-latest` and `macos-latest`. It installs ffmpeg (not preinstalled on
-either runner image — measured against both manifests) and deselects the 22 tests that need
-auto-editor, hyperframes, or the operator's exact ffmpeg pin. **`ubuntu-latest` ships ffmpeg 6.1.1
-and no Ubuntu release ships 8.x**, so CI asserts a floor of 6 plus the version-parsing surface,
-and says so in the step name rather than claiming a pin it does not perform — an earlier version
-ran a bare `apt-get install ffmpeg` under a step named "Assert ffmpeg major version" and then
-asserted the major was 8, which could never hold.
+either runner image — measured against both manifests) and deselects the 21 tests that need
+auto-editor or hyperframes, neither of which CI installs. `tools.FFMPEG_FLOOR` is `6` — a real
+floor, not a series pin — measured against cutline's own source (nothing newer than roughly
+ffmpeg 3) and its test fixtures (`-display_rotation`, tests-only, ffmpeg 6.0). **`ubuntu-latest`
+ships ffmpeg 6.1.1**, which satisfies that floor, so the CI step calls
+`cutline.tools.find_tool(floor=FFMPEG_FLOOR)` directly — the same check `cutline doctor` runs —
+instead of reimplementing the comparison inline. An earlier version ran a bare `apt-get install
+ffmpeg` under a step named "Assert ffmpeg major version" and then asserted the major was 8, which
+could never hold on this runner.
 
 The workflow has **never run**. `origin/main` is the pre-implementation planning commit, so no
 push has triggered it. Its steps have been checked by extracting them from the YAML and executing
