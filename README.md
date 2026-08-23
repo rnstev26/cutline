@@ -2,14 +2,19 @@
 
 A verification spine for a two-source video pipeline.
 
-> **Status: v1 implemented, v1 acceptance criterion not yet met.** The orchestration, the
-> per-boundary verification, the CLI and the test suite exist and pass locally — 86 tests driving
-> real ffmpeg 8.1.1, auto-editor 31.5.0 and hyperframes 0.8.9 binaries and asserting on ffprobe
-> output rather than on mocks. Two things have *not* happened. **No real recording has been
-> through the flow** — every artifact tested so far is an ffmpeg-generated fixture, and the
-> Roadmap's v1 criterion names a real recording. And **CI has never executed**: `origin/main` is
-> still the pre-implementation planning commit, so the workflow in `.github/workflows/` is
-> configured but unproven on a runner. See [Roadmap](#roadmap) for what remains.
+> **Status — measured 2026-08-23.** v1 is implemented and merged; its acceptance criterion is
+> **not** met. The orchestration, per-boundary verification, CLI and test suite exist and pass —
+> 88 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
+> output rather than on mocks. **CI is green on `ubuntu-latest` and `macos-latest`**, which also
+> settled a real question: ubuntu ships ffmpeg 6.1.1, and the floor in `tools.FFMPEG_FLOOR` exists
+> because of it. What has **not** happened: **no real recording has been through the flow** —
+> every artifact tested so far is an ffmpeg-generated fixture, and the Roadmap's v1 criterion
+> names a real recording. See [Roadmap](#roadmap).
+>
+> *This block asserts runtime facts, which have a truth-time. It carries a date for that reason —
+> hyperframes alone moved 0.8.7 → 0.8.9 → 0.8.10 during v1's development, twice in one day. Tool
+> versions are deliberately named in [Requirements](#requirements) as supported ranges rather than
+> restated here as observations that go stale.*
 
 `cutline` orchestrates existing tools and checks their work. It does not reimplement them.
 [auto-editor](https://github.com/WyattBlue/auto-editor) cuts, HyperFrames captions and overlays,
@@ -156,10 +161,12 @@ instead of reimplementing the comparison inline. An earlier version ran a bare `
 ffmpeg` under a step named "Assert ffmpeg major version" and then asserted the major was 8, which
 could never hold on this runner.
 
-The workflow has **never run**. `origin/main` is the pre-implementation planning commit, so no
-push has triggered it. Its steps have been checked by extracting them from the YAML and executing
-them locally — the ffmpeg gate exits 0 here, exits 1 against a fake reporting 5.1.4, and exits 1
-on an unparseable version — but "green on a runner" is not yet a fact about this repository.
+**First run: 2026-08-23, green on both runners.** Before that push its steps had only been
+checked by extracting them from the YAML and running them locally, which is why this section
+previously said "green on a runner is not yet a fact about this repository" — it now is. The run
+also produced the measurement the floor exists for: `ubuntu-latest` reported **ffmpeg 6.1.1**, so
+the earlier `= 8` assertion would have failed there permanently, and a series pin would have
+refused it as surely as a too-low one.
 
 ## Roadmap
 
