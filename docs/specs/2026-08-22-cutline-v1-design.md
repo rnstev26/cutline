@@ -465,8 +465,33 @@ out-of-range segments, §3.1 catches it as input validation.
    - **hyperframes:** pinned to the `0.8.` series rather than exactly, because the two available
      measurements disagreed — the review brief recorded 0.8.7 and the machine reports 0.8.9. An
      exact pin would have refused one of the two environments that ratified the work.
-5. **`COMPOSITE_POLICY.invariant` is a single property, `video.codec`.** The caption stage's
-   stop-the-flow gate is now under test (it was not, and could be deleted with the whole suite
-   green), but even wired correctly it can only fire on a codec change — at the boundary §2 calls
-   the suspect one. Everything else at that boundary is `may_change` or `warn`. Whether that set is
-   right is a policy decision, flagged rather than taken.
+5. **`COMPOSITE_POLICY.invariant` is a single property, `video.codec`. This is a v2 design item,
+   not a v1 defect.** The caption stage's stop-the-flow gate is now under test (it was not, and
+   could be deleted with the whole suite green), but even wired correctly it can only fire on a
+   codec change — at the boundary §2 calls the suspect one. Everything else at that boundary is
+   `may_change` or `warn`.
+
+   **Measured, on the real acceptance artifact** (final review): the caption stage discards 3.4s of
+   9.38s — **36% of the cut content** — and the boundary reports OK. Correct for a 6-second
+   composition, but **indistinguishable from a renderer that dropped a third of the timeline**: a
+   single-property invariant has no way to tell "the composition is short by design" from "the
+   composition lost material it shouldn't have."
+
+   **Not acted on here — v1 is not touched.** Two forward recommendations for whoever takes this up
+   in v2:
+   - **The cheap half:** move `video.width`/`video.height` from `may_change` to `warn`. Costs
+     nothing, fails nothing, and makes a geometry surprise visible instead of silent.
+   - **The real question, and it is design work, not a policy tweak:** what duration *should* the
+     composite boundary assert against? Not the source's duration — the composite is expected to
+     differ from that by construction — but the **composition's declared duration**, which nothing
+     currently reads or checks. v2's faceless source path (§7, §8) runs a *different* composition
+     through this same boundary, which is exactly where a single-property invariant starts costing
+     something rather than merely looking thin.
+6. **The black-frame gate's threshold is measured against a 16:9 canvas only; v2 must re-measure
+   against its own population.** `BLACK_FRAME_RATIO_THRESHOLD = 0.80` (`src/cutline/flow.py`) is
+   measured, not assumed — but the measurement population is v1's, and v1 only exercises a 16:9
+   canvas. **Measured:** a 2.35:1 source pillarboxed into a 9:16 canvas reaches **0.76** black-pixel
+   ratio from legitimate letterbox bars alone — **0.04 of headroom** against the 0.80 gate, on
+   content the gate is supposed to pass. v2's faceless source path composes into canvases v1 never
+   tried; before that path relies on this gate, the threshold needs re-measuring against v2's own
+   aspect-ratio population, not inherited from v1's.
