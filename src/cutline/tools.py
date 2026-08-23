@@ -19,10 +19,12 @@ FFMPEG_MIN = "8."
 # hyperframes is pinned to its MINOR series, not to an exact build like
 # auto-editor. Two reasons, both measured rather than assumed:
 #
-#   * the two measurements available disagree. The final-review brief recorded
-#     0.8.7 installed; `hyperframes --version` on this machine reports 0.8.9
-#     and `npm ls -g` confirms hyperframes@0.8.9. An exact pin would therefore
-#     have refused to run on one of the two environments that ratified it.
+#   * the version MOVED under us during this project's development, on this
+#     same machine, with no action taken to upgrade it: `hyperframes doctor`
+#     reported 0.8.7 (latest) early on, and 0.8.9 (latest) hours later. That is
+#     a stronger case for a series pin than two environments disagreeing would
+#     have been — it is evidence the tool upgrades itself unattended, not just
+#     that two machines happened to differ.
 #   * what cutline depends on is the render CLI's shape — `hyperframes render`,
 #     the `renders/<name>.mp4` output path, and `data-no-timeline` — not an
 #     export format the way auto-editor's exact pin protects `--export v3`.
