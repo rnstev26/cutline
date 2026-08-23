@@ -91,6 +91,28 @@ loudly, naming the offending segment — not internal bugs.
   branch last published 2025-11-04. cutline detects a pip-installed auto-editor and refuses to run.
 - HyperFrames **0.8.x** (`npm install -g hyperframes`), for the caption and overlay stages
 
+### Upgrading hyperframes
+
+`HYPERFRAMES_SERIES` is a speed bump, not a guarantee — the version number is a proxy for the
+thing that actually breaks cutline, which is a change in the render CLI's *shape* (the `render`
+subcommand, its cwd-relative output path, `assets/input.mp4`, the composition attribute
+vocabulary, `data-no-timeline`). `tests/test_hyperframes_contract.py` is the real gate: one test
+per assumption, each failing with a message naming which one moved.
+
+When the pin refuses a newer hyperframes:
+
+1. `npm install -g hyperframes@<new-version>`
+2. `uv run pytest -m requires_hyperframes` — this runs the contract tests (and everything else
+   marked `requires_hyperframes`) against it
+3. All green → bump the `HYPERFRAMES_SERIES` string in `tools.py` and commit
+4. Red → read which assumption's diagnostic fired. Some failures are good news (e.g. the cwd
+   quirk being fixed upstream calls for simplifying `flow.caption()`, not reverting anything);
+   others are real breaks that need a code change before the pin moves.
+
+A scheduled workflow (`.github/workflows/upstream-check.yml`) runs these same tests weekly against
+`hyperframes@latest` and opens an issue naming the version and what failed — it only reports; it
+never bumps the pin itself.
+
 ## Verification
 
 `cutline` does not report success from a subprocess exit code. Every artifact is verified by

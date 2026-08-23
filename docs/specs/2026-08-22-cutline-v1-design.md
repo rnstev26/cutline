@@ -482,6 +482,14 @@ out-of-range segments, §3.1 catches it as input validation.
      repeatedly and unattended — observed three times in one working day, 2026-08-22/23, on this
      same machine (see the comment above `HYPERFRAMES_SERIES` in `tools.py`) — which a series pin
      absorbs and an exact pin would not.
+
+     **The pin is a proxy, not the guarantee.** What actually breaks cutline is a change in the
+     render CLI's *shape* — the `render` subcommand, its cwd-relative output path,
+     `assets/input.mp4`, the composition attribute vocabulary, `data-no-timeline` — not the version
+     number. `tests/test_hyperframes_contract.py` is the real gate: one test per assumption,
+     each diagnosable on its own, so a drift names what moved instead of "the render failed."
+     `.github/workflows/upstream-check.yml` runs it weekly against `hyperframes@latest` and
+     reports; it never bumps the pin itself.
 5. **`COMPOSITE_POLICY.invariant` is a single property, `video.codec`. This is a v2 design item,
    not a v1 defect.** The caption stage's stop-the-flow gate is now under test (it was not, and
    could be deleted with the whole suite green), but even wired correctly it can only fire on a
