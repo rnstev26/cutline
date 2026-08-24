@@ -339,21 +339,52 @@ def test_composition_width_height_and_duration_attributes_drive_the_render(
     )
 
 
+# The added wall clock `data-no-timeline` removes, in seconds. Measured
+# 2026-08-23 on this machine, hyperframes 0.8.10, the SAME composition rendered
+# twice per row -- once with the attribute, once without:
+#
+#   condition              with     without    difference    ratio
+#   idle                   5.2 s     94.4 s      89.2 s      18.2
+#   idle                   4.3 s     94.4 s      90.1 s      22.0
+#   all 18 cores busy     14.1 s    104.6 s      90.5 s       7.4
+#   NEGATIVE CONTROL: attribute present but doing nothing
+#   (both legs scaffolded WITHOUT it)
+#                         94.8 s     94.8 s       0.0 s       1.00
+#
+# Read the columns. The DIFFERENCE moved 1.3 s across a 3.3x change in machine
+# load; the RATIO moved 22.0 -> 7.4 and the with-attribute leg alone moved
+# 4.3 -> 14.1. That is why this test no longer asserts an absolute bound on the
+# fast leg, and why it does not assert a ratio either: what the attribute
+# removes is a WALL-CLOCK poll timeout, which does not compress under CPU
+# contention the way real work does, so the difference is the load-invariant
+# quantity and both proxies for it are contaminated.
+#
+# The previous form asserted `fast_elapsed < 30` and said so itself -- "either
+# this machine is under unusually heavy load, or data-no-timeline no longer
+# skips the sub-composition poll" -- i.e. it could not distinguish the two, and
+# two consecutive baseline runs on unmodified main gave 2 failed then 1 failed.
+#
+# 30 s sits between two MEASURED populations: 3.0x below the tightest working
+# case (89.2 s) and 30 s above the broken one (0.0 s). It is also below the one
+# ~45 s poll timeout the attribute skips, so any real skip must clear it.
+MIN_SKIPPED_WALL_CLOCK_SECONDS = 30
+
+
 def test_data_no_timeline_skips_the_subcomposition_readiness_poll(tmp_path, plain_av):
     """Assumption 6: `data-no-timeline` on the composition root actually
     skips HyperFrames' sub-composition timeline poll, rather than being a
     harmless, ignored attribute that hf_project's docstring only THINKS
     matters.
 
-    Measured (see tests/conftest.py's `hf_project` docstring, and this
-    task's own investigation notes): WITH the attribute, a render of this
-    composition completes in single-digit seconds. WITHOUT it, HyperFrames
-    polls every `[data-composition-id]` host for `window.__timelines[id]`,
-    which never registers on a GSAP-free static overlay, and only proceeds
-    after its ~45-second timeout lapses -- measured directly at ~144s wall
-    clock for the same composition with the attribute removed (dominated
-    by, but not limited to, that one poll). 30s sits cleanly between the
-    two: nowhere near the ~5s fast case, nowhere near the >=45s slow one.
+    Both renders run on the same machine in the same test, and the assertion
+    is on the wall clock the attribute REMOVES -- see
+    MIN_SKIPPED_WALL_CLOCK_SECONDS above for the measured populations and for
+    why neither an absolute bound nor a ratio is the right instrument.
+
+    Traced in the installed hyperframes CLI (`pollSubCompositionTimelines` in
+    dist/cli.js): it polls every host carrying `data-composition-id` for a
+    `window.__timelines[id]` registration that a GSAP-free static overlay never
+    makes, and only proceeds, best-effort, once its ~45-second timeout lapses.
     """
     fast_dir = tmp_path / "fast"
     _scaffold(fast_dir, plain_av, no_timeline=True)
@@ -362,15 +393,10 @@ def test_data_no_timeline_skips_the_subcomposition_readiness_poll(tmp_path, plai
     start = time.monotonic()
     fast = subprocess.run(
         [str(tool.path), "render", "."],
-        capture_output=True, text=True, timeout=60, cwd=fast_dir,
+        capture_output=True, text=True, timeout=300, cwd=fast_dir,
     )
     fast_elapsed = time.monotonic() - start
     assert fast.returncode == 0, f"fast (data-no-timeline) render failed: {fast.stderr}"
-    assert fast_elapsed < 30, (
-        f"render WITH data-no-timeline took {fast_elapsed:.1f}s -- expected "
-        "well under 30s. Either this machine is under unusually heavy load, "
-        "or data-no-timeline no longer skips the sub-composition poll."
-    )
 
     slow_dir = tmp_path / "slow"
     _scaffold(slow_dir, plain_av, no_timeline=False)
@@ -378,7 +404,7 @@ def test_data_no_timeline_skips_the_subcomposition_readiness_poll(tmp_path, plai
     try:
         slow = subprocess.run(
             [str(tool.path), "render", "."],
-            capture_output=True, text=True, timeout=180, cwd=slow_dir,
+            capture_output=True, text=True, timeout=300, cwd=slow_dir,
         )
         slow_elapsed = time.monotonic() - start
         slow_failed_outright = slow.returncode != 0
@@ -393,13 +419,17 @@ def test_data_no_timeline_skips_the_subcomposition_readiness_poll(tmp_path, plai
         "merely being slow -- that is a different assumption breaking, not "
         "this one"
     )
-    assert slow_elapsed >= 30, (
-        f"render WITHOUT data-no-timeline took only {slow_elapsed:.1f}s -- "
-        "expected it to burn most or all of the ~45s "
-        "sub-composition-readiness timeout. Either that timeout's default "
-        "changed, or HyperFrames stopped polling for a timeline "
-        "registration on GSAP-free compositions -- in which case "
-        "data-no-timeline may no longer be doing anything, and the "
+    skipped = slow_elapsed - fast_elapsed
+    assert skipped >= MIN_SKIPPED_WALL_CLOCK_SECONDS, (
+        f"data-no-timeline saved only {skipped:.1f}s of wall clock "
+        f"(with: {fast_elapsed:.1f}s, without: {slow_elapsed:.1f}s) -- expected "
+        f"at least {MIN_SKIPPED_WALL_CLOCK_SECONDS}s, measured at 89-91s under "
+        "loads from idle to fully saturated. Either the ~45s "
+        "sub-composition-readiness timeout changed, or HyperFrames stopped "
+        "polling for a timeline registration on GSAP-free compositions -- in "
+        "which case data-no-timeline may no longer be doing anything, and the "
         "attribute's docstring on tests/conftest.py's hf_project fixture "
-        "should be re-measured and possibly removed."
+        "should be re-measured and possibly removed. Note this measures the "
+        "DIFFERENCE, which is load-invariant, so 'the machine was busy' is not "
+        "an explanation for a failure here."
     )

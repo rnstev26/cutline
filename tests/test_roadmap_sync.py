@@ -21,11 +21,23 @@ def test_rows_carry_the_whole_row_not_just_the_version_label():
     """The guard used to extract only `(v[0-9.]+)` from column 1 and compare
     that. Measured in review: rewriting the README's v1 row — "adds" to
     `TOTALLY DIFFERENT SCOPE`, "done when" to "nothing at all, ship it blind" —
-    left it printing `roadmap in sync` and exiting 0."""
+    left it printing `roadmap in sync` and exiting 0.
+
+    The assertion is on CELL STRUCTURE plus one phrase from each of columns 2
+    and 3, not on the criterion's wording. It used to pin the literal string
+    "rotation on a portrait source", and when the adversarial review's F5
+    established that that clause was vacuous — rotation is invariant at the cut
+    boundary and `may_change` at the composite one, so it named a check with no
+    reachable failure state — this test went red on the CORRECTION. A guard
+    that reddens when the thing it guards is improved is asserting a revision,
+    not a behaviour: the behaviour here is "columns 2 and 3 survive the
+    extractor", and any phrase from them proves it.
+    """
     rows = roadmap_rows(ROOT / "README.md")
     v1 = next(r for r in rows if r.startswith("v1 |"))
-    assert "verified recorded-source flow" in v1
-    assert "rotation on a portrait source" in v1
+    assert len(v1.split(" | ")) == 3, v1
+    assert "verified recorded-source flow" in v1          # column 2
+    assert "a real recording goes cut" in v1              # column 3
 
 
 def test_content_drift_in_a_row_is_visible(tmp_path):
