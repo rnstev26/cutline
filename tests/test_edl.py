@@ -74,3 +74,37 @@ def test_empty_timeline_is_rejected():
 
 def test_duration_seconds_uses_the_timebase():
     assert parse_v3(V3).duration_seconds == pytest.approx(200 / 30)
+
+
+def test_v3_refuses_a_clip_carrying_effects():
+    """§3.1 gates the speed vocabulary for `v1` and says nothing about `v3`,
+    the PRIMARY format. Measured, auto-editor 31.5.0 does not express a speed
+    change as a `speed` field — `--set-speed 2.0,0,1.5sec --export v3` emits
+    `"effects": ["speed:2.0"]` on the clip — and `parse_v3` read `start`,
+    `dur`, `offset` and ignored the rest.
+    """
+    doc = {
+        "version": "3", "timebase": "30/1",
+        "v": [[{"src": "in.mp4", "start": 0, "dur": 23, "offset": 0,
+                "stream": 0, "effects": ["speed:2.0"]}]],
+    }
+    with pytest.raises(EdlError, match="effects"):
+        parse_v3(json.dumps(doc))
+
+
+def test_v3_accepts_the_shape_auto_editor_actually_exports():
+    """The negative control for the rule above: an ordinary `--edit audio`
+    export carries no `effects` key, and must not be refused by it.
+
+    Without this, tightening `_refuse_out_of_scope_effects` into something that
+    rejects every clip would leave the test above green.
+    """
+    doc = {
+        "version": "3", "templateFile": "in.mov", "timebase": "30/1",
+        "background": "#000000", "resolution": [1280, 720],
+        "samplerate": 44100, "layout": "mono", "langs": ["und", "und"],
+        "v": [[{"src": "in.mov", "start": 0, "dur": 45, "offset": 0, "stream": 0},
+               {"src": "in.mov", "start": 45, "dur": 30, "offset": 60, "stream": 0}]],
+    }
+    edl = parse_v3(json.dumps(doc))
+    assert edl.total_frames == 75

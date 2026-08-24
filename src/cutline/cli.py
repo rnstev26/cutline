@@ -7,6 +7,7 @@ from typing import Annotated
 
 import typer
 
+from cutline.edl import EdlError
 from cutline.flow import FlowError
 from cutline.flow import caption as caption_stage
 from cutline.flow import cut as cut_stage
@@ -56,12 +57,24 @@ def _report(results) -> None:
 
 @app.command()
 def cut(
-    source: Path, out: Annotated[Path, typer.Option("--out")] = Path("out")
+    source: Path,
+    out: Annotated[Path, typer.Option("--out")] = Path("out"),
+    # The two parameters that decide whether the cut is USABLE rather than
+    # merely intact. `flow.cut()` has taken them since it was written and the
+    # CLI exposed neither, so the only way to change a margin was to edit the
+    # source — while §0 celebrates asymmetric margins as a capability rev 1
+    # lacked. An artifact that passes every boundary check and clips the
+    # operator's word onsets satisfies "verified" and fails "usable".
+    #
+    # The defaults are auto-editor's own (`--margin 0.2s`, `--edit audio`),
+    # unchanged, so this adds a knob and moves no behaviour.
+    margin: Annotated[str, typer.Option("--margin")] = "0.2sec",
+    edit: Annotated[str, typer.Option("--edit")] = "audio",
 ) -> None:
     """Cut dead air with auto-editor and verify the artifact."""
     try:
-        _report([cut_stage(source, out)])
-    except (FlowError, ToolError, FileNotFoundError) as exc:
+        _report([cut_stage(source, out, margin=margin, edit=edit)])
+    except (FlowError, ToolError, EdlError, FileNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -73,7 +86,7 @@ def caption(
     """Composite captions with HyperFrames and verify the artifact."""
     try:
         _report([caption_stage(source, project, out)])
-    except (FlowError, ToolError, FileNotFoundError) as exc:
+    except (FlowError, ToolError, EdlError, FileNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
@@ -85,6 +98,6 @@ def run(
     """The full v1 flow: cut, verify, caption, verify."""
     try:
         _report(run_flow(source, project, out))
-    except (FlowError, ToolError, FileNotFoundError) as exc:
+    except (FlowError, ToolError, EdlError, FileNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

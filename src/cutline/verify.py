@@ -47,8 +47,14 @@ _VIDEO = ("width", "height", "codec", "pix_fmt", "sar", "dar", "profile",
           "nb_frames", "start_time")
 _AUDIO = ("sample_rate", "channels", "codec", "start_time")
 
+# `video_streams` / `audio_streams` are whole-file counts, not per-stream
+# properties, which is why they carry no dot -- see MediaInfo for the
+# measurement that says audio counts can be invariant at the cut boundary and
+# an ordered all-kinds tuple cannot.
+_WHOLE_FILE = ("rotation", "duration", "video_streams", "audio_streams")
+
 CHECKED_PROPERTIES = frozenset(
-    ["rotation", "duration", *(f"video.{p}" for p in _VIDEO), *(f"audio.{p}" for p in _AUDIO)]
+    [*_WHOLE_FILE, *(f"video.{p}" for p in _VIDEO), *(f"audio.{p}" for p in _AUDIO)]
 )
 
 
@@ -125,7 +131,7 @@ class Report:
 CUT_POLICY = Policy(
     name="cut",
     invariant=frozenset(
-        ["rotation",
+        ["rotation", "video_streams", "audio_streams",
          "video.width", "video.height", "video.codec", "video.pix_fmt",
          "video.sar", "video.dar", "video.profile",
          "audio.sample_rate", "audio.channels", "audio.codec"]
@@ -147,7 +153,13 @@ COMPOSITE_POLICY = Policy(
          "video.sar", "video.dar", "video.pix_fmt", "video.profile",
          "video.start_time", "audio.start_time"]
     ),
-    warn=frozenset(["audio.sample_rate", "audio.channels", "audio.codec"]),
+    # Stream counts WARN rather than fail here. v1's composition takes one
+    # video and one audio and emits one of each, so this never fires on the v1
+    # path; what it is for is v2's faceless compositions, where a multi-track
+    # source collapsing into the canvas is a thing to SAY, not measured yet to
+    # be a thing to refuse.
+    warn=frozenset(["audio.sample_rate", "audio.channels", "audio.codec",
+                    "video_streams", "audio_streams"]),
     # Nothing directional here: §4.1 says the composite's duration becomes the
     # COMPOSITION's, which may be longer or shorter than the source.
 )

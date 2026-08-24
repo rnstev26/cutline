@@ -222,8 +222,45 @@ def test_checked_properties_covers_the_section_4_1_set():
     start_times are the ones that were silently unexamined."""
     assert {
         "duration", "rotation",
+        # §4.1's "stream count + kinds -- catches a dropped audio track" row.
+        # It was named in the table and was NOT expressible in the model
+        # beneath it, which addresses `video.*` / `audio.*` in the singular.
+        "video_streams", "audio_streams",
         "video.nb_frames", "video.codec", "video.profile", "video.pix_fmt",
         "video.width", "video.height", "video.sar", "video.dar",
         "video.start_time",
         "audio.sample_rate", "audio.channels", "audio.codec", "audio.start_time",
     } == set(CHECKED_PROPERTIES)
+
+
+def test_cut_boundary_rejects_a_dropped_audio_track():
+    """The hazard §4.1's stream-count row names, with the second track carrying
+    properties IDENTICAL to the first — so every per-stream assertion still
+    passes and only the count can tell.
+    """
+    def two_audio(n):
+        return MediaInfo(
+            path=Path("x.mp4"),
+            duration=12.0,
+            streams=(
+                StreamInfo(kind="video", codec="h264", width=1920, height=1080,
+                           pix_fmt="yuv420p", nb_frames=360),
+                *[StreamInfo(kind="audio", codec="aac", sample_rate=44100,
+                             channels=1) for _ in range(n)],
+            ),
+            rotation=None,
+        )
+
+    r = verify(two_audio(2), two_audio(1), CUT_POLICY)
+    assert not r.ok
+    assert any(c.prop == "audio_streams" for c in r.changes), r.changes
+
+
+def test_composite_boundary_only_warns_about_stream_counts():
+    """v1's composition takes one of each and emits one of each, so this never
+    fires on the v1 path; classifying it `warn` rather than inventing a
+    refusal is what the measurement supports.
+    """
+    r = verify(_info(), _info(), COMPOSITE_POLICY)
+    assert r.ok
+    assert "video_streams" in COMPOSITE_POLICY.warn

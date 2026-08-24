@@ -161,15 +161,58 @@ def find_tool(name: str, *, floor: str | None = None, series: str | None = None)
     return Tool(name=name, path=path, version=version)
 
 
+def _is_compiled_executable(path: Path) -> bool:
+    """Is this a compiled binary, or a script pretending to be one?
+
+    Positive identification, replacing a proximity heuristic. The previous rule
+    was "a file named `python` sits next to it", and §9 sends everyone to
+    install the CORRECT binary into `~/.local/bin` — a directory that very
+    commonly also holds a `python` from pipx or uv. Measured 2026-08-23: with a
+    `python` placed beside a symlink to the genuine 31.5.0 Nim binary,
+    `require_auto_editor()` refused the good install:
+
+        REFUSED: auto-editor at .../auto-editor looks pip-installed (python
+        shim alongside it).
+
+    It was false-negative-prone in the other direction too: a pip install into
+    any layout WITHOUT that sibling passed, and was then caught only by the
+    version pin — a different refusal with a different message, so the operator
+    was told "wrong version" for a problem that is "wrong project".
+
+    What actually distinguishes them is measurable on the file itself. Measured
+    on this machine, two independent Python tool-chains (pipx and uv) both
+    produce console scripts that are TEXT beginning with `#!`:
+
+        #!/bin/sh
+        #!/Users/.../bin/python
+
+    while the genuine release is a compiled image:
+
+        Mach-O 64-bit executable arm64,  magic cf fa ed fe
+        sha256 58d8893a389df60223b2a9d9f1307451d1581e1965c5f0e2e626c95024dbcca3
+        26,117,768 bytes            (both re-measured 2026-08-23, still §9's)
+
+    The hash is deliberately NOT the gate: §9's value is one platform's asset,
+    and pinning it would refuse a legitimate Linux or x86_64 build. The shebang
+    is the property that actually differs between the two projects.
+    """
+    try:
+        with path.open("rb") as fh:
+            return fh.read(2) != b"#!"
+    except OSError:
+        # Unreadable: fail closed. A file we could not inspect is not evidence
+        # that it is the pinned release.
+        return False
+
+
 def require_auto_editor() -> Tool:
     """auto-editor, and specifically the Nim binary rather than the pip package.
 
     PyPI serves auto-editor 29.3.1, a Python branch abandoned 2025-11-04. It
     installs without error and answers to the same command name, so detecting it
-    by version alone is not enough — a pip install also plants a python shim
-    alongside it in the same directory.
+    by version alone is not enough.
 
-    The pip-shim check runs BEFORE version parsing, not after: a pip-installed
+    The identification runs BEFORE version parsing, not after: a pip-installed
     auto-editor's `--version` output is not guaranteed to parse cleanly (or to
     run at all), so parsing first can raise an unrelated "could not parse a
     version" error that masks the actual, more useful diagnosis.
@@ -180,11 +223,11 @@ def require_auto_editor() -> Tool:
             f"required tool not found on PATH: auto-editor. {_install_hint('auto-editor')}"
         )
     path = Path(found)
-    sibling_python = path.parent / "python"
-    if sibling_python.exists():
+    if not _is_compiled_executable(path):
         raise ToolError(
-            f"auto-editor at {path} looks pip-installed (python shim alongside it). "
-            "PyPI serves a dead Python branch; install the Nim binary from "
+            f"auto-editor at {path} is not the pinned release: it is a script, not "
+            "a compiled binary, which is the shape pip / pipx / uv console scripts "
+            "have. PyPI serves a dead Python branch; install the Nim binary from "
             "https://github.com/WyattBlue/auto-editor/releases instead."
         )
     tool = find_tool("auto-editor")

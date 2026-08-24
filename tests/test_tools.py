@@ -1,4 +1,6 @@
 import re
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -85,15 +87,44 @@ def test_require_auto_editor_accepts_the_nim_binary():
 
 
 def test_require_auto_editor_rejects_a_pip_install(tmp_path, monkeypatch):
-    """A pip-installed auto-editor lives beside a python shim and is the dead branch."""
+    """A pip / pipx / uv console script is TEXT starting with `#!`.
+
+    Measured on this machine across two independent tool-chains: pipx writes
+    `#!/bin/sh`, uv writes `#!/…/bin/python`. The genuine release is a compiled
+    image (Mach-O `cf fa ed fe`), so the shebang is the property that separates
+    the two projects, and it does so wherever either is installed.
+    """
     fake = tmp_path / "auto-editor"
     fake.write_text("#!/usr/bin/env python\n")
     fake.chmod(0o755)
-    (tmp_path / "python").write_text("")
     monkeypatch.setenv("PATH", str(tmp_path))
     with pytest.raises(ToolError) as exc:
         require_auto_editor()
     assert "pip" in str(exc.value).lower()
+
+
+@pytest.mark.requires_auto_editor
+def test_require_auto_editor_accepts_the_binary_beside_an_unrelated_python(
+    tmp_path, monkeypatch
+):
+    """The negative control, and it is the case the old rule got WRONG.
+
+    The old rule refused when a file named `python` sat in the same directory.
+    §9 tells the operator to install the correct binary into `~/.local/bin`,
+    which is exactly where pipx and uv also drop a `python` — so the documented
+    happy path was refused as a bad install. Measured live before the fix:
+
+        REFUSED: auto-editor at .../auto-editor looks pip-installed
+                 (python shim alongside it)
+
+    ...against a symlink to the genuine 31.5.0 binary.
+    """
+    real = Path(shutil.which("auto-editor"))
+    link = tmp_path / "auto-editor"
+    link.symlink_to(real)
+    (tmp_path / "python").write_text("")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert require_auto_editor().version == "31.5.0"
 
 
 @pytest.mark.requires_hyperframes
