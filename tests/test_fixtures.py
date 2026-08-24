@@ -140,3 +140,39 @@ def test_black_after_head_is_bright_at_the_head_and_black_after(black_after_head
     assert tail < 20, (
         f"tail measured {tail} -- not black, so a whole-file probe would have nothing to catch"
     )
+
+
+def _stream_json(path, select="v:0", entries="stream=nb_frames"):
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", select,
+         "-show_entries", entries, "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads(proc.stdout)["streams"][0]
+
+
+def test_fragmented_source_reports_no_header_frame_count(fragmented_source, silence_mid):
+    """The defect this fixture exists for, asserted on the fixture itself.
+
+    Without this control the fixture could quietly become an ordinary `.mov`
+    (a changed `-movflags`, a different ffmpeg) and every test that uses it
+    would keep passing while exercising nothing. Paired against `silence_mid`,
+    which is the same coded video in a normal container, so the assertion says
+    the CONTAINER is the variable and not the content.
+    """
+    assert "nb_frames" not in _stream_json(fragmented_source)
+    assert "nb_frames" not in _stream_json(fragmented_source, select="a:0")
+    assert "nb_frames" in _stream_json(silence_mid)
+
+
+def test_variable_frame_rate_really_varies(variable_frame_rate):
+    """`avg_frame_rate` must actually diverge from `r_frame_rate`.
+
+    A `select` filter without `-fps_mode vfr` silently produces a CONSTANT-rate
+    file with duplicated frames, which would make every VFR test vacuous while
+    staying green.
+    """
+    s = _stream_json(variable_frame_rate, entries="stream=r_frame_rate,avg_frame_rate")
+    r_num, r_den = (int(x) for x in s["r_frame_rate"].split("/"))
+    a_num, a_den = (int(x) for x in s["avg_frame_rate"].split("/"))
+    assert a_num / a_den != r_num / r_den, s
