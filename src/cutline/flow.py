@@ -9,6 +9,7 @@ than handing a suspect artifact to the next stage.
 from __future__ import annotations
 
 import glob
+import math
 import re
 import shutil
 import subprocess
@@ -20,8 +21,30 @@ from cutline.probe import MediaInfo, probe
 from cutline.tools import require_auto_editor, require_hyperframes
 from cutline.verify import CUT_POLICY, Report, verify
 
-# Keeping at least this fraction of the source means the cut is effectively a
-# no-op, and re-encoding would cost quality for nothing.
+# Keeping at least this fraction of the source TIMELINE means the cut is
+# effectively a no-op, and re-encoding would cost quality for nothing.
+#
+# "of the source TIMELINE", not "of the source's video stream", and the
+# distinction is not pedantic — it was a silent-wrong-artifact bug of exactly
+# the shape §2 says cutline exists to catch. The EDL's frame total counts
+# TIMELINE frames at the EDL's own timebase; `MediaInfo.video.nb_frames` counts
+# frames in the VIDEO STREAM. Those are the same number only when the
+# container's declared duration equals the video stream's length.
+#
+# Measured 2026-08-23 against the old comparison, on a source carrying 6s of
+# video and 12s of audio with silence at 3-5s and 8-9.5s:
+#
+#   EDL keep-total                    281 timeline frames (of 360) -- a real cut
+#   source video stream               180 frames
+#   281 >= 180 * 0.995                TRUE  -> classified a no-op
+#   result                            the SOURCE was copied through byte-for-byte
+#                                     UNEDITED, and the boundary reported [cut] OK
+#
+# (md5 of input and output identical; tests/test_flow_cut.py::
+# test_a_real_cut_is_not_classified_a_no_op_when_audio_outruns_video pins it.)
+#
+# Comparing the EDL total against the source's timeline length in the SAME
+# units removes the mismatch: 281/360 = 0.78, the cut renders.
 NO_OP_RATIO = 0.995
 
 # How often the luma probe samples. The previous implementation read
@@ -152,18 +175,31 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
             f"ambiguous EDL export: multiple files matched {edl_stem}.* -> {produced}"
         )
     parsed = edl_mod.parse(produced[0])
+    source_frames = _source_timeline_frames(before, parsed)
+    _check_edl_fits_the_source(parsed, source_frames, source)
 
     # No-op short-circuit: if the cut would keep essentially everything, copy
     # instead of re-encoding. A re-encode for a ~0% cut is pure generation loss.
-    source_frames = before.video.nb_frames if before.video else None
     if source_frames and parsed.total_frames >= source_frames * NO_OP_RATIO:
         rendered = out_dir / f"{source.stem}_cut.mp4"
         shutil.copyfile(source, rendered)
         after = probe(rendered)
+        # §5's rule is "a boundary check fails -> stop the flow", stated without
+        # exception; this path used to return its report WITHOUT gating on it,
+        # so a failing report here would have printed and exited zero. Harmless
+        # while the path is a byte-for-byte copy — the report cannot fail — but
+        # an unstated exception is how a reachable one gets added later.
+        report = verify(before, after, CUT_POLICY)
+        if not report.ok:
+            raise FlowError(
+                "cut stage short-circuited as a no-op and the copy still did not "
+                f"survive verification (this should be impossible for a byte-for-byte "
+                f"copy, so treat it as a bug in the copy path):\n{report}"
+            )
         return StageResult(
             name="cut",
             output=rendered,
-            report=verify(before, after, CUT_POLICY),
+            report=report,
             edl=parsed,
             before=before,
             after=after,
@@ -175,6 +211,7 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
             str(tool.path), str(source),
             "--edit", edit,
             "--margin", margin,
+            *_profile_args(before),
             "-o", str(rendered),
         ],
         "auto-editor render",
@@ -191,6 +228,129 @@ def cut(source: Path, out_dir: Path, margin: str = "0.2sec", edit: str = "audio"
     return StageResult(
         name="cut", output=rendered, report=report, edl=parsed, before=before, after=after
     )
+
+
+# ffprobe's H.264 profile names, mapped to the vocabulary auto-editor's
+# `-profile:v` accepts ("For h264: high, main, or baseline"). Only H.264 is
+# mapped, and deliberately: measured, an HEVC source came back HEVC/Main
+# unasked, so nothing needs declaring there, and `-profile:v main` would be the
+# wrong vocabulary if it did.
+_H264_PROFILE_ARG = {
+    "baseline": "baseline",
+    "constrained baseline": "baseline",
+    "main": "main",
+    "high": "high",
+}
+
+
+def _profile_args(before: MediaInfo) -> list[str]:
+    """Declare the source's video profile to the renderer, rather than hoping.
+
+    §4.1 makes `video.profile` an invariant of the cut boundary — "catches
+    silent transcode changes". Measured 2026-08-23 on a real Apple-written
+    `.mov` (H.264 **Main**), auto-editor 31.5.0 rendered H.264 **High**: its
+    libx264 defaults, not the source's profile. The boundary check fired, on a
+    healthy render, and the cut was refused:
+
+        [cut] FAILED
+          violation: video.profile: 'Main' -> 'High'
+
+    Two ways to make that stop. Drop `profile` from the invariant set — which
+    is deleting the check §4.1 says catches silent transcode changes. Or make
+    the render satisfy it, which auto-editor exposes an argument for. Measured
+    with `-profile:v main` on the same file: profile Main, frame count 1151
+    unchanged from the run without it.
+
+    So the invariant is not weakened; the renderer is simply told what it is
+    expected to preserve. This is the EDL-as-declared-expectation idea (§3.1)
+    running in the one direction v1 actually has a channel for.
+
+    Returns [] when the profile is absent or outside the mapped vocabulary. That
+    is not an exemption: `verify()` still compares the property afterwards, so
+    an unmapped profile that the renderer changes still fails the boundary.
+    """
+    video = before.video
+    if video is None or video.codec != "h264" or not video.profile:
+        return []
+    arg = _H264_PROFILE_ARG.get(video.profile.strip().lower())
+    return ["-profile:v", arg] if arg else []
+
+
+def _source_timeline_frames(before: MediaInfo, parsed: edl_mod.Edl) -> int | None:
+    """The source's length in the EDL's OWN units: timeline frames.
+
+    auto-editor builds its timeline from the source's declared duration at the
+    timebase it chose, so this is the quantity its keep-totals are counted in.
+    Measured 2026-08-23 on six containers, this predicted auto-editor's
+    no-cut render length EXACTLY in every case:
+
+        container                     format.duration   predicted   rendered
+        ts.mov            (normal)           3.000000          90         90
+        ts_frag.mov       (fragmented)       3.066667          92         92
+        nobf_frag.mov     (fragmented)       3.023242          91         91
+        qtnormal.mkv      (matroska)         3.023000          91         91
+        qs.mov            (normal)          12.000000         360        360
+        qs_frag.mov       (fragmented)      12.066667         362        362
+
+    Rounded to 1e-3 of a frame before the ceiling: ffprobe reports duration to
+    six decimals, so 3.066667 * 30 arrives as 92.00001 and a bare ceil() would
+    read 93. Rounding at a thousandth of a frame is far below any real
+    quantity here and far above the reporting noise.
+
+    Returns None when the duration is unreadable — fail closed, and every
+    caller treats None as "cannot judge" rather than as a permissive default.
+    """
+    if before.duration <= 0:
+        return None
+    tb = parsed.timebase
+    raw = before.duration * tb.num / tb.den
+    return math.ceil(round(raw, 3))
+
+
+def _check_edl_fits_the_source(
+    parsed: edl_mod.Edl, source_frames: int | None, source: Path
+) -> None:
+    """The one source-dependent EDL invariant. `edl.parse` stays pure.
+
+    `edl._validate` enforces ordering, positivity and non-overlap — every one a
+    property of the keep-list considered ALONE. None of them is bounded by the
+    source, because a pure parser has no source to be bounded by. So an EDL
+    claiming a segment past the end of the footage parsed clean, validated
+    clean, and reached the render: measured, a v3 timeline declaring a single
+    999999-frame keep against a 90-frame source raised nothing.
+
+    That gap mattered because the only quantitative gate downstream
+    (`_check_render_matches_edl`) compares the render against THAT SAME EDL —
+    so an EDL that over-claims and a render that pads to match it AGREE, and
+    the boundary reports OK.
+
+    Validation is therefore parse-pure PLUS this one check, which needs the
+    source's measured length and so cannot live in the parser.
+
+    Fails closed: an unmeasurable source length refuses rather than skips.
+    """
+    if source_frames is None:
+        raise FlowError(
+            f"cannot bound auto-editor's EDL against {source}: the source's "
+            "duration is unreadable, so a keep-list claiming frames the source "
+            "does not have could not be detected. Refusing to render."
+        )
+    for keep in parsed.keeps:
+        end = keep.offset + keep.dur
+        if end > source_frames:
+            raise FlowError(
+                f"auto-editor's EDL claims source frames [{keep.offset}, {end}) but "
+                f"{source} carries only {source_frames} timeline frames at "
+                f"{parsed.timebase.num}/{parsed.timebase.den}. A keep-segment past "
+                "the end of the footage would be padded by the renderer and the "
+                "render/EDL agreement check would then agree with itself."
+            )
+    if parsed.total_frames > source_frames:
+        raise FlowError(
+            f"auto-editor's EDL keeps {parsed.total_frames} frames but {source} "
+            f"carries only {source_frames} timeline frames at "
+            f"{parsed.timebase.num}/{parsed.timebase.den}."
+        )
 
 
 def _check_render_matches_edl(parsed: edl_mod.Edl, after: MediaInfo, rendered: Path) -> None:

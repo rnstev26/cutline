@@ -1,9 +1,11 @@
 import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from cutline import flow as flow_mod
 from cutline.flow import FlowError, cut
 from cutline.probe import probe
 from cutline.verify import CUT_POLICY, Change, Report, verify
@@ -195,3 +197,155 @@ def test_the_cut_policy_alone_cannot_see_a_truncation(silence_mid, tmp_path):
         result.after, duration=0.4, streams=(replace(video, nb_frames=12), *others)
     )
     assert verify(before, truncated, CUT_POLICY).ok
+
+
+@pytest.mark.requires_auto_editor
+def test_a_container_without_a_header_frame_count_still_verifies(
+    fragmented_source, tmp_path
+):
+    """The recording-readiness case: a crash-safe container, cut and verified.
+
+    Measured on this fixture before the fix, `cut()` refused a healthy render:
+
+        [cut] FAILED
+          violation: video.nb_frames: None -> 282 (this boundary permits a
+                     shrink, not a growth)
+
+    Nothing had shrunk or grown — one side was simply unmeasured, and `_grew`
+    fails closed on an unreadable side. The resolution is that `probe()` now
+    MEASURES the count when the header omits it, so the comparison is between
+    two numbers. Deleting the direction constraint would have made this pass
+    too, and would have removed the check instead of the unknown.
+    """
+    result = cut(fragmented_source, tmp_path)
+    assert result.report.ok, str(result.report)
+    before, after = probe(fragmented_source), probe(result.output)
+    assert before.video.nb_frames is not None
+    assert after.video.nb_frames < before.video.nb_frames
+    assert after.duration < before.duration
+
+
+@pytest.mark.requires_auto_editor
+def test_variable_frame_rate_source_cuts_and_verifies(variable_frame_rate, tmp_path):
+    """F3's unexamined case, examined.
+
+    Every other fixture is synthetic CFR at 30fps, so the suite could not say
+    whether the frame-count identity gate survives a source whose presented
+    cadence is uneven — and §2 names phone footage, which measurably is, as the
+    ordinary input. This does not prove VFR is universally safe; it proves the
+    gate is not vacuously green because no fixture could reach it.
+    """
+    result = cut(variable_frame_rate, tmp_path)
+    assert result.report.ok, str(result.report)
+
+
+@pytest.mark.requires_auto_editor
+def test_a_real_cut_is_not_classified_a_no_op_when_audio_outruns_video(
+    fixture_dir, tmp_path
+):
+    """The no-op gate must compare TIMELINE frames to TIMELINE frames.
+
+    It used to compare the EDL's keep-total (timeline frames) against
+    `video.nb_frames` (video-STREAM frames). Those differ whenever the
+    container's declared duration exceeds the video stream's length, and the
+    consequence was the §2 failure shape exactly: measured on this source
+    (6s of video, 12s of audio, silence at 3-5s and 8-9.5s) auto-editor's EDL
+    kept 281 of 360 timeline frames — a real cut — and 281 >= 180 * 0.995
+    classified it a no-op, so the SOURCE was copied through byte-for-byte
+    unedited and the boundary reported `[cut] OK`.
+
+    Two assertions, because the report is exactly what the bug corrupted. The
+    unit one pins the quantity; the integration one pins the consequence — with
+    the gate reverted to `video.nb_frames`, `cut()` returns a StageResult whose
+    output is byte-identical to the source and whose report reads OK, so NO
+    exception is raised and the `pytest.raises` below fails. (Refusing this
+    particular source is itself correct: auto-editor renders the full 360-frame
+    timeline, i.e. 281 frames of video where the source stream had 180, and a
+    cut that lengthens the video stream is a real difference to report.)
+    """
+    source = fixture_dir / "audio_outruns_video.mp4"
+    if not source.exists():
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "color=c=navy:s=640x360:d=6:r=30",
+             "-f", "lavfi", "-i", "sine=frequency=220:duration=12",
+             "-af", "volume=enable='between(t,3,5)+between(t,8,9.5)':volume=0",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source)],
+            check=True, capture_output=True, text=True,
+        )
+    before = probe(source)
+    assert before.video.nb_frames == 180, "fixture must have a 6s video stream"
+
+    edl = flow_mod.edl_mod.Edl(
+        timebase=flow_mod.edl_mod.Timebase(30, 1),
+        keeps=(flow_mod.edl_mod.Keep(start=0, dur=281, offset=0),),
+    )
+    assert flow_mod._source_timeline_frames(before, edl) == 360, (
+        "the source's length in the EDL's own units is 12s * 30fps, not the "
+        "video stream's 180 frames"
+    )
+
+    with pytest.raises(FlowError, match="nb_frames"):
+        cut(source, tmp_path)
+    rendered = tmp_path / f"{source.stem}_cut.mp4"
+    assert rendered.exists() and rendered.read_bytes() != source.read_bytes(), (
+        "the source was copied through unedited: the no-op gate compared the "
+        "EDL's timeline frames against the video stream's frame count"
+    )
+
+
+@pytest.mark.requires_auto_editor
+def test_an_edl_claiming_more_than_the_source_is_refused(
+    monkeypatch, silence_mid, tmp_path
+):
+    """F1: `edl._validate`'s invariants are all properties of the keep-list
+    considered ALONE, so an EDL claiming frames past the end of the source
+    parsed clean and reached the render — where the only quantitative gate
+    compares the render against THAT SAME EDL, so an over-claiming EDL and a
+    padded render agree with each other.
+
+    Substituting a parse result is the honest way to reach this: auto-editor
+    31.5.0 does not produce such an EDL, and a test that could only fire if it
+    did would be a guard on a target the code never writes.
+    """
+    real_parse = flow_mod.edl_mod.parse
+
+    def over_claiming(path):
+        parsed = real_parse(path)
+        fat = replace(parsed.keeps[0], dur=parsed.keeps[0].dur + 100_000)
+        return replace(parsed, keeps=(fat, *parsed.keeps[1:]))
+
+    monkeypatch.setattr(flow_mod.edl_mod, "parse", over_claiming)
+    with pytest.raises(FlowError, match="carries only"):
+        cut(silence_mid, tmp_path)
+
+
+@pytest.mark.requires_auto_editor
+def test_the_source_video_profile_survives_the_cut(fixture_dir, tmp_path):
+    """§4.1 makes `video.profile` an invariant of this boundary. Measured on a
+    real Apple-written `.mov` (H.264 **Main**), auto-editor rendered H.264
+    **High** — its libx264 default — and the cut was refused:
+
+        [cut] FAILED
+          violation: video.profile: 'Main' -> 'High'
+
+    on a healthy render. `flow._profile_args` declares the source's profile to
+    the renderer rather than hoping for it. This fixture reproduces the input
+    shape (a Main-profile source) without depending on a file outside the repo.
+    """
+    source = fixture_dir / "main_profile.mp4"
+    if not source.exists():
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "color=c=navy:s=640x360:d=12:r=30",
+             "-f", "lavfi", "-i", "sine=frequency=220:duration=12",
+             "-af", "volume=enable='between(t,3,5)+between(t,8,9.5)':volume=0",
+             "-c:v", "libx264", "-profile:v", "main", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-shortest", str(source)],
+            check=True, capture_output=True, text=True,
+        )
+    before = probe(source)
+    assert before.video.profile == "Main", "fixture must actually be Main profile"
+    result = cut(source, tmp_path)
+    assert result.report.ok, str(result.report)
+    assert probe(result.output).video.profile == "Main"
