@@ -4,12 +4,18 @@ A verification spine for a two-source video pipeline.
 
 > **Status — measured 2026-08-23.** v1 is implemented and merged; its acceptance criterion is
 > **not** met. The orchestration, per-boundary verification, CLI and test suite exist and pass —
-> 88 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
+> 109 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
 > output rather than on mocks. **CI is green on `ubuntu-latest` and `macos-latest`**, which also
 > settled a real question: ubuntu ships ffmpeg 6.1.1, and the floor in `tools.FFMPEG_FLOOR` exists
-> because of it. What has **not** happened: **no real recording has been through the flow** —
-> every artifact tested so far is an ffmpeg-generated fixture, and the Roadmap's v1 criterion
-> names a real recording. See [Roadmap](#roadmap).
+> because of it. **CI does not install auto-editor or hyperframes**, so both pipeline stages are
+> exercised only on the operator's machine — see the spec's §6 for what that leaves uncovered.
+>
+> What has **not** happened: **no recording made for this project has been through the flow.**
+> A real Apple-written `.mov` was put through the cut stage on 2026-08-23 to find out what a
+> genuine capture does to it, and it found two blockers a synthetic fixture could not (an H.264
+> profile the boundary could not satisfy, and a no-op gate comparing two different quantities);
+> both are fixed. That is not the acceptance run — the Roadmap's v1 criterion names a recording
+> made for this pipeline, cut *and* captioned. See [Roadmap](#roadmap).
 >
 > *This block asserts runtime facts, which have a truth-time. It carries a date for that reason —
 > hyperframes alone moved 0.8.7 → 0.8.9 → 0.8.10 during v1's development, twice in one day. Tool
@@ -46,7 +52,7 @@ catches that.
 
 | module | what it does |
 |---|---|
-| `tools.py` | locates ffmpeg, ffprobe, auto-editor and hyperframes; pins their versions; refuses a pip-installed auto-editor by detecting the python shim beside it |
+| `tools.py` | locates ffmpeg, ffprobe, auto-editor and hyperframes; pins their versions; refuses anything that is not the pinned auto-editor release by identifying it positively — a compiled image rather than a `#!` script |
 | `probe.py` | ffprobe → `MediaInfo`: geometry, SAR/DAR, rotation side data, audio parameters, per-stream `start_time`, frame count |
 | `verify.py` | compares two `MediaInfo`s under a per-boundary `Policy`; every checked property is classified `invariant` / `may_change` / `warn`, and an unclassified one is an error rather than a silence |
 | `edl.py` | parses auto-editor `v3` and `v1` timelines into keep-segments **in integer frames** at a rational timebase |
@@ -69,7 +75,8 @@ The accepted export names on 31.5.0 are **`v1`**, **`v3`**, `final-cut-pro` and 
 measured, by running them. `--export otio` and `--export json` are **both rejected**
 (`Error! Unknown export format: otio`) even though the source tree carries an OTIO module; an
 earlier revision of this file claimed auto-editor "emits OpenTimelineIO and JSON" and that was
-read from the repository, not from the CLI. cutline consumes `v3`, with `v1` as a cross-check.
+read from the repository, not from the CLI. cutline consumes `v3`; `v1` parsing is a scoped
+capability rather than a running cross-check.
 Note that auto-editor **overrides the output extension**: `-o out.json --export v3` writes
 `out.v3`, so the flow locates the artifact by the name auto-editor actually produced.
 
@@ -134,7 +141,10 @@ and **the boundaries differ in kind** — measured, not assumed:
   count may **shrink and only shrink**; a cut that produced a longer artifact is a violation.
   Direction alone does not bound magnitude, so the rendered frame count is additionally
   cross-checked against the keep-list auto-editor declared in its own EDL — measured across all
-  six fixture classes, those agree exactly, so a truncated render cannot pass as "a shrink".
+  eight fixture classes, those agree exactly, so a truncated render cannot pass as "a shrink".
+  Where a container reports no frame count at all (a fragmented `.mov`, a Matroska remux) the
+  count is **measured** by demuxing rather than exempted: 0.05 s on 88 s of 1080p, against 15 s
+  for a full decode.
 - **HyperFrames (a composite)** legitimately *consumes* rotation into a fixed canvas and takes the
   composition's duration, so both are permitted. A change in audio parameters is recorded as a
   **warning**, not a failure (measured: a 44.1 kHz mono source came out 48 kHz stereo,
@@ -198,8 +208,8 @@ criterion below names a *real recording* and none has been run through it.
 
 | version | adds | done when |
 |---|---|---|
-| **v1** | verified recorded-source flow | a real recording goes cut → captioned with **every boundary verified**, including rotation on a portrait source; the suite is proven able to go red against all six fixture classes |
-| **v1.5** | own analyzer + renderer, as a *second* EDL producer behind the same interface | it renders the **first test subject** (spec §7.1), **preserves rotation**, and is benchmarked against auto-editor on the same file with the comparison published |
+| **v1** | verified recorded-source flow | a real recording goes cut → captioned, and **every boundary check the composite boundary actually gates on passes** — codec identity, a non-black render, stream counts, and at the cut boundary the full invariant set including rotation, geometry, profile and audio parameters; **the operator confirms the cut is USABLE**, not merely intact; the suite is proven able to go red against all **eight** fixture classes; **and a demonstrated RED** — a deliberately damaged artifact substituted at each boundary, which the boundary check rejects. |
+| **v1.5** | own analyzer + renderer, as a *second* EDL producer behind the same interface — ⚠️ **contradicts §3.2's "out of scope in every version"; unresolved, see spec §8** | it renders the **first test subject** (spec §7.1), **preserves rotation**, and is benchmarked against auto-editor on the same file with the comparison published |
 | v2 | faceless source path | a HyperFrames composition enters the same flow and passes the same boundary checks |
 | v3 | MCP agent layer | an agent completes a full flow end to end, and **refuses** when a boundary check fails |
 | v4 | recording, publishing | optional |
