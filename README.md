@@ -4,7 +4,7 @@ A verification spine for a two-source video pipeline.
 
 > **Status — measured 2026-08-23.** v1 is implemented and merged; its acceptance criterion is
 > **not** met. The orchestration, per-boundary verification, CLI and test suite exist and pass —
-> 109 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
+> 111 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
 > output rather than on mocks. **CI is green on `ubuntu-latest` and `macos-latest`**, which also
 > settled a real question: ubuntu ships ffmpeg 6.1.1, and the floor in `tools.FFMPEG_FLOOR` exists
 > because of it. **CI does not install auto-editor or hyperframes**, so both pipeline stages are
@@ -21,6 +21,12 @@ A verification spine for a two-source video pipeline.
 > hyperframes alone moved 0.8.7 → 0.8.9 → 0.8.10 during v1's development, twice in one day. Tool
 > versions are deliberately named in [Requirements](#requirements) as supported ranges rather than
 > restated here as observations that go stale.*
+>
+> *The test count above is one of those observations, and it had gone stale in three places at
+> once — this block said 109, [Tests](#tests) said 86, and the CI paragraph said 21 deselected.
+> Re-measured **2026-09-05: 111 collected, 33 deselected under CI's markers**. Every count in this
+> file now names the command that produces it, so the next reader re-runs it instead of trusting
+> the prose:* `uv run pytest --collect-only -q | tail -1`
 
 `cutline` orchestrates existing tools and checks their work. It does not reimplement them.
 [auto-editor](https://github.com/WyattBlue/auto-editor) cuts, HyperFrames captions and overlays,
@@ -178,13 +184,18 @@ generator passed against the stale cached file. `tests/conftest.py` documents it
 site. Delete the relevant file under `tests/_fixtures/` before trusting any fixture mutation.
 
 ```
-uv run pytest                      # 86 tests, ~50s, needs all four binaries
-uv run pytest -m "not requires_auto_editor and not requires_hyperframes"
+uv run pytest                      # 111 tests, ~50s, needs all four binaries
+uv run pytest -m "not requires_auto_editor and not requires_hyperframes"   # 78 of them; what CI runs
+uv run pytest --collect-only -q | tail -1                                  # re-measure before citing either
 ```
 
 CI is configured for `ubuntu-latest` and `macos-latest`. It installs ffmpeg (not preinstalled on
-either runner image — measured against both manifests) and deselects the 21 tests that need
-auto-editor or hyperframes, neither of which CI installs. `tools.FFMPEG_FLOOR` is `6` — a real
+either runner image — measured against both manifests) and deselects the **33** tests that need
+auto-editor or hyperframes, neither of which CI installs — leaving **78 of 111** actually run on a
+runner. *This number read `21` until 2026-09-05, and it was wrong by a category rather than by
+drift: 21 is the count of `requires_auto_editor` alone, cited as the count of the union. The two
+markers are 21 and 16, and 4 tests carry both, so the union is 33 — a number no single marker
+query returns. Measured:* `uv run pytest -m "not requires_auto_editor and not requires_hyperframes" --collect-only -q | tail -1` `tools.FFMPEG_FLOOR` is `6` — a real
 floor, not a series pin — measured against cutline's own source (nothing newer than roughly
 ffmpeg 3) and its test fixtures (`-display_rotation`, tests-only, ffmpeg 6.0). **`ubuntu-latest`
 ships ffmpeg 6.1.1**, which satisfies that floor, so the CI step calls
