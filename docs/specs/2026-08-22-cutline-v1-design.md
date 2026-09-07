@@ -510,6 +510,14 @@ trust on content before a money asset is run through it.
 
 Each version is done when its criterion is met. Nothing is done by default.
 
+**v1 met 2026-09-07.** A 5:00 recording made for this pipeline went cut → captioned: `[cut] OK`,
+`[composite] OK`, duration held 263.637 → 263.667 across the composite boundary, operator ruled the
+cut usable, and `scripts/red_demo.py` returned 9/9 on the same source. Two limits are recorded in
+the README's Status block and not treated as discharged: the source carried **no rotation**, so
+that invariant passed trivially and the RED demo skipped its rotation case; and the "proven able to
+go red against all eight fixture classes" clause rests on the suite's per-fixture positive controls
+rather than a mutation campaign.
+
 | version | adds | done when |
 |---|---|---|
 | **v1** | verified recorded-source flow | a real recording goes cut → captioned, and **every boundary check the composite boundary actually gates on passes** — codec identity, a non-black render, stream counts, and at the cut boundary the full invariant set including rotation, geometry, profile and audio parameters; **the operator confirms the cut is USABLE**, not merely intact; the suite is proven able to go red against all **eight** fixture classes; **and a demonstrated RED** — a deliberately damaged artifact substituted at each boundary, which the boundary check rejects. |

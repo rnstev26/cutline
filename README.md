@@ -2,20 +2,38 @@
 
 A verification spine for a two-source video pipeline.
 
-> **Status — measured 2026-08-23.** v1 is implemented and merged; its acceptance criterion is
-> **not** met. The orchestration, per-boundary verification, CLI and test suite exist and pass —
-> 111 tests driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe
-> output rather than on mocks. **CI is green on `ubuntu-latest` and `macos-latest`**, which also
-> settled a real question: ubuntu ships ffmpeg 6.1.1, and the floor in `tools.FFMPEG_FLOOR` exists
-> because of it. **CI does not install auto-editor or hyperframes**, so both pipeline stages are
-> exercised only on the operator's machine — see the spec's §6 for what that leaves uncovered.
+> **Status — measured 2026-09-07. v1 ACCEPTED.** A recording made for this pipeline has been
+> through the full flow: a 5:00 solo-to-camera take (1280×720 h264, mono 48kHz) cut to 4:24 and
+> captioned, `[cut] OK` and `[composite] OK`, with duration holding **263.637 → 263.667** across
+> the composite boundary — one frame. The operator ruled the cut **usable**. A demonstrated RED
+> ran against the same source: **9/9** boundaries rejected their damaged artifact, each case
+> gated on a positive control proving the damage actually landed first. The suite is **111 tests**
+> driving real ffmpeg, auto-editor and hyperframes binaries and asserting on ffprobe output rather
+> than on mocks, green on `ubuntu-latest` and `macos-latest`. **CI does not install auto-editor or
+> hyperframes**, so both pipeline stages are exercised only on the operator's machine — see the
+> spec's §6 for what that leaves uncovered.
 >
-> What has **not** happened: **no recording made for this project has been through the flow.**
-> A real Apple-written `.mov` was put through the cut stage on 2026-08-23 to find out what a
-> genuine capture does to it, and it found two blockers a synthetic fixture could not (an H.264
-> profile the boundary could not satisfy, and a no-op gate comparing two different quantities);
-> both are fixed. That is not the acceptance run — the Roadmap's v1 criterion names a recording
-> made for this pipeline, cut *and* captioned. See [Roadmap](#roadmap).
+> **Two things the acceptance run did NOT establish, recorded rather than smoothed over:**
+>
+> - **Rotation passed trivially.** The source carried no rotation side data (`rotation=None`), so
+>   the cut boundary's rotation invariant held `None → None` and the RED demo skipped its rotation
+>   case for want of a source to damage. Rotation is the founding failure of this project and it
+>   remains exercised only by synthetic fixtures. A phone recording would test it for real.
+> - **No mutation campaign was run.** The criterion's "proven able to go red against all eight
+>   fixture classes" is discharged here by the per-fixture positive controls inside the passing
+>   suite, not by a separate campaign that mutates the code and confirms red. That is a weaker
+>   proof than the words describe, and it is the operator's judgment that it suffices.
+>
+> The run also found a defect **outside** this repo worth naming here, because it would have
+> falsified the acceptance: a caption composition with a hardcoded `data-duration` truncates the
+> render, and `COMPOSITE_POLICY` treats duration as `may_change`, so the boundary reports **OK**.
+> Measured — the fixture project at `tests/_fixtures/hfproj` hardcodes `6`; fed a 12.000s source
+> it emitted 6.000s and cutline said `[composite] OK`. See v2 item (c). The producer side now
+> derives duration from the artifact (`makeready/caption/`).
+>
+> Earlier, on 2026-08-23, a real Apple-written `.mov` was put through the cut stage alone and found
+> two blockers a synthetic fixture could not (an H.264 profile the boundary could not satisfy, and
+> a no-op gate comparing two different quantities); both were fixed before this run.
 >
 > *This block asserts runtime facts, which have a truth-time. It carries a date for that reason —
 > hyperframes alone moved 0.8.7 → 0.8.9 → 0.8.10 during v1's development, twice in one day. Tool
@@ -213,9 +231,23 @@ refused it as surely as a too-low one.
 
 ## Roadmap
 
-Each version's acceptance criterion is what defines it as done. **v1 is not done**: the flow runs
-end to end and every boundary is verified, including on a rotated portrait source, but the
-criterion below names a *real recording* and none has been run through it.
+Each version's acceptance criterion is what defines it as done. **v1 is done — accepted
+2026-09-07** on a 5:00 recording made for this pipeline, cut → captioned, every boundary check
+passing, the operator confirming the cut usable, and a 9/9 demonstrated RED. Two limits are
+recorded in the [Status](#cutline) block above rather than waved through: the source carried no
+rotation, so that invariant passed trivially, and the "proven able to go red" clause rests on the
+suite's per-fixture positive controls rather than a mutation campaign.
+
+**A tuning finding that belongs with the criterion, not in shell history.** The cut stage's
+defaults (`--edit audio`, `--margin 0.2sec`) were ruled **unusable** on the acceptance take: they
+removed 39.7% and clipped the *ends* of sentences, not just breaths. The speaker's voice drops
+through her final syllables, below auto-editor's default 0.04 loudness threshold, so those
+syllables were never classified as speech — and `--margin` only expands regions already classified
+loud, so it was padding outward from a boundary sitting inside the word. `--edit
+audio:threshold=0.02 --margin 0.2s,0.6s` was accepted (12.1% removed). **These defaults are not
+changed**: they are upstream's, they are speaker-specific, and cutline does not know whose voice it
+is cutting. The values live in the producer's job spec (`makeready/jobs/`), where a speaker-specific
+decision belongs.
 
 | version | adds | done when |
 |---|---|---|
