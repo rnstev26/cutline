@@ -12,6 +12,7 @@ from cutline.flow import FlowError
 from cutline.flow import caption as caption_stage
 from cutline.flow import cut as cut_stage
 from cutline.flow import run as run_flow
+from cutline.issues import find_issues_in_srt
 from cutline.probe import probe as probe_file
 from cutline.tools import ToolError, discover
 
@@ -101,3 +102,29 @@ def run(
     except (FlowError, ToolError, EdlError, FileNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+
+@app.command()
+def issues(
+    transcript: Path,
+    phrase: Annotated[int, typer.Option("--phrase")] = 4,
+    window: Annotated[float, typer.Option("--window")] = 30.0,
+) -> None:
+    """Report re-takes, false starts and stutters in a transcript. Never edits.
+
+    There is deliberately no --fix. A third-party editor's equivalent deleted
+    15 words for 6 reported removals -- every deletion took the following word
+    with it -- and its restore verb reported 8 restores while performing 2 and
+    destroyed 96 unrelated silence trims. Detection is safe; deletion is not,
+    and the operator rules on every candidate.
+
+    Exit 1 only on medium/high. Low is review-class: a restart that diverges
+    from its fragment is usually deliberate parallel structure.
+    """
+    if not transcript.is_file():
+        typer.echo(f"no such transcript: {transcript}", err=True)
+        raise typer.Exit(1)
+    report = find_issues_in_srt(transcript.read_text(), phrase=phrase, window=window)
+    typer.echo(str(report))
+    if not report.ok:
+        raise typer.Exit(1)

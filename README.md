@@ -81,10 +81,44 @@ catches that.
 | `verify.py` | compares two `MediaInfo`s under a per-boundary `Policy`; every checked property is classified `invariant` / `may_change` / `warn`, and an unclassified one is an error rather than a silence |
 | `edl.py` | parses auto-editor `v3` and `v1` timelines into keep-segments **in integer frames** at a rational timebase |
 | `flow.py` | `cut` → verify → `caption` → verify, stopping the flow at the first boundary that fails |
-| `cli.py` | `cutline doctor · probe · cut · caption · run` |
+| `issues.py` | transcript content issues — re-takes, false starts, stutters. **Detection only: no delete path exists, by construction** |
+| `cli.py` | `cutline doctor · probe · cut · caption · run · issues` |
 
 `uv run cutline doctor` prints the four tools and their resolved versions and paths, or refuses
 naming the first one missing and how to install it.
+
+### `cutline issues` — detection with no edit path
+
+```
+uv run cutline issues <transcript.srt>
+```
+
+Reports duplicate takes, false starts and adjacent repeats. **It cannot change anything.** There is
+no `--fix`, no `--apply`, and a test asserts the module exposes no function whose name contains
+`delete` / `remove` / `fix` / `apply` / `write`, so the guarantee is structural rather than a
+promise in prose.
+
+That shape was chosen from a measurement, not a preference. On 2026-09-07 a third-party editor's
+transcript cleanup ran over v1's acceptance recording. Its repeat-removal **deleted 15 words for 6
+reported removals** — every deletion took the following word with it, because a word deletion
+becomes a time region and the region overran its neighbour:
+
+```
+"where too much visibility attracted criticism"  ->  "where too much. attracted criticism"
+"rather than the full one"                       ->  "rather than the one"
+```
+
+It was not repairable either: restoring the pair and re-deleting only the duplicate trimmed both
+again. Its restore verb reported `wordsRestored: 8` while restoring **2**, and destroyed **96**
+unrelated silence trims that its own documentation promised to leave untouched.
+
+**Severity is the whole design, because the expensive error is a confident wrong one, not a miss.**
+`low` never sets a non-zero exit. A repeat whose two occurrences *diverge* afterwards is rhetoric,
+not a re-take — the operator's own *"it is not a confidence problem. It is not a fear of judgment
+problem."* scored `high` until that guard existed. Anaphora between full sentences is not a false
+start. A repeat across a sentence boundary (*"clear it. It just produces"*) is correct English.
+Run on the real acceptance transcript, it returns **3 candidates, all `low`, exit 0** — which is the
+right answer: that delivery is clean, and what looks like repetition is the speaker's style.
 
 ## The contract
 
